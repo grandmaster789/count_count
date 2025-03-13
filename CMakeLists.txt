@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.3.0)
+cmake_minimum_required(VERSION 3.10)
 
 set(CMAKE_TOOLCHAIN_FILE "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "Vcpkg toolchain file")
 
@@ -11,6 +11,8 @@ find_package(OpenCV REQUIRED)
 
 add_executable(CountVonCount)
 
+# while this is not particularly encouraged, it saves me from reloading CMakeLists all the time
+# and as such this is a kind of experiment for me to see if this causes any issues
 file(GLOB_RECURSE CountSources CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
@@ -35,6 +37,10 @@ if (MSVC)
             /WX # Warnings as errors
             /MP # Enable multi-processor compilation
     )
+
+    # MSVC specific, this will avoid showing a console window upon startup
+    # (side note, gcc for windows uses '-mwindows': https://gcc.gnu.org/onlinedocs/gcc-4.4.2/gcc/i386-and-x86_002d64-Windows-Options.html
+    #target_link_options(CountVonCount PRIVATE /SUBSYSTEM:WINDOWS /entry:mainCRTStartup)
 else()
     # technically these are for gcc and clang only
     target_compile_options(CountVonCount PRIVATE
