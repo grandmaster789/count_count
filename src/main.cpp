@@ -7,6 +7,8 @@
 #include <opencv2/videoio/registry.hpp>
 #include <chrono>
 #include <format>
+#include <filesystem>
+#include <fstream>
 
 #if CVC_PLATFORM != CVC_PLATFORM_WINDOWS
     #error "Currently only Windows is supported (webcam API)"
@@ -86,9 +88,42 @@ bool check_resolution(int camera_id, const Resolution& res) {
         (actual_height == res.height);
 }
 
-int main() {
-    static constexpr int k_DefaultCamera = 0;
+Resolution select_resolution(int camera_id = 0) {
+    // if a resolution was selected before, use that
+    if (std::filesystem::exists("count_count.cfg")) {
+        std::ifstream cfg("count_count.cfg");
+        int width = 0;
+        int height = 0;
 
+        cfg >> width >> height;
+
+        return { width, height };
+    }
+
+    std::vector<Resolution> resolutions = {
+            Resolution { 3840, 2160 }, // 4k
+            Resolution { 1920, 1080},  // 1080p
+            Resolution { 1280, 720 },  // 720p
+            Resolution { 640,  480 }   // 480p
+    };
+
+    size_t selected_resolution = 0;
+
+    for (; selected_resolution < resolutions.size(); ++selected_resolution) {
+        if (check_resolution(camera_id, resolutions[selected_resolution]))
+            break;
+    }
+
+    auto result = resolutions[selected_resolution];
+
+    // cache the result on disk
+    std::ofstream cfg("count_count.cfg");
+    cfg << result.width << ' ' << result.height;
+
+    return result;
+}
+
+int main() {
     std::cout << "Starting Counting...\n";
     std::cout << "Running on: " << cvc::ePlatform::current << '\n';
     std::cout << "Built " << cvc::get_days_since_build() << " days ago\n";
@@ -116,21 +151,7 @@ int main() {
         std::cout << ' ' << cv::videoio_registry::getBackendName(x) << '\n';
 
     {
-        std::vector<Resolution> resolutions = {
-                Resolution { 3840, 2160 }, // 4k
-                Resolution { 1920, 1080},  // 1080p
-                Resolution { 1280, 720 },  // 720p
-                Resolution { 640,  480 }   // 480p
-        };
-
-        size_t selected_resolution = 0;
-
-        for (; selected_resolution < resolutions.size(); ++selected_resolution) {
-            if (check_resolution(k_DefaultCamera, resolutions[selected_resolution]))
-                break;
-        }
-
-        auto res = resolutions[selected_resolution];
+        auto res = select_resolution();
 
         std::cout << "Selected resolution: " << res << '\n';
 
@@ -141,17 +162,25 @@ int main() {
             return -1;
         }
 
-        webcam.set(cv::CAP_PROP_FRAME_WIDTH, resolutions[selected_resolution].width);
-        webcam.set(cv::CAP_PROP_FRAME_HEIGHT, resolutions[selected_resolution].height);
+        webcam.set(cv::CAP_PROP_FRAME_WIDTH, res.width);
+        webcam.set(cv::CAP_PROP_FRAME_HEIGHT, res.height);
 
         cv::String main_window = "Webcam Video Stream";
         cv::namedWindow(main_window, cv::WINDOW_KEEPRATIO | cv::WINDOW_AUTOSIZE); // create resizable window
 
-        cv::Mat webcam_image;
+        cv::Mat webcam_image;      // BGR
+        cv::Mat hsv_image;         // HSV
+        cv::Mat hue_image;         // grayscale (hue)
+        cv::Mat blurred;           // grayscale
+        cv::Mat edges;
+        cv::Mat thresholded_image; // grayscale
+
+        int show = 0;
 
         // press 'q' or escape to terminate the loop
         bool done = false;
         while (!done) {
+            // ----- video input -----
             webcam >> webcam_image;
 
             if (webcam_image.empty()) {
@@ -159,7 +188,68 @@ int main() {
                 break;
             }
 
-            cv::imshow(main_window, webcam_image);
+            // if the other images haven't been initialized yet, do so now
+            if (hsv_image.empty())
+                hsv_image.create(webcam_image.size(), CV_8UC3);
+            if (hue_image.empty())
+                hue_image.create(webcam_image.size(), CV_8UC1);
+            if (blurred.empty())
+                blurred.create(webcam_image.size(), CV_8UC1);
+            if (edges.empty())
+                edges.create(webcam_image.size(), CV_8UC1);
+            if (thresholded_image.empty())
+                thresholded_image.create(webcam_image.size(), CV_8UC1);
+
+            // ----- video processing -----
+            cv::cvtColor(webcam_image, hsv_image, cv::COLOR_BGR2HSV_FULL);
+            int channel_selection[] = {1, 0};
+            cv::mixChannels(&hsv_image, 1, &hue_image, 1, channel_selection, 1);
+            cv::GaussianBlur(hue_image, blurred, cv::Size(5, 5), 0); // slight blur seems to improve results
+            cv::Canny(blurred, edges, 100, 200);
+
+            std::vector<std::vector<cv::Point>> contours;
+            std::vector<cv::Vec4i> hierarchy;
+            cv::findContours(edges, contours, hierarchy, cv::RETR_TREE, cv::CHAIN_APPROX_SIMPLE);
+
+            if (!contours.empty()) {
+                auto largest_contour_idx = [&] {
+                   int idx = 0;
+                   size_t contour_size = contours[idx].size();
+
+                   for (int i = 0; i < contours.size(); ++i) {
+                       size_t sz = contours[idx].size();
+                       if (sz > contour_size) {
+                           idx = i;
+                           contour_size = sz;
+                       }
+                   }
+
+                   return idx;
+                }();
+
+                std::cout << largest_contour_idx << " => " << contours[largest_contour_idx].size() << '\n';
+
+                cv::drawContours(
+                        webcam_image,
+                        contours,
+                        largest_contour_idx,
+                        cv::Scalar(128, 255, 255),
+                        5,
+                        cv::LINE_8,
+                        hierarchy
+                );
+            }
+
+            // ----- rendering -----
+            switch (show) {
+            case 0: cv::imshow(main_window, webcam_image); break;
+            case 1: cv::imshow(main_window, hsv_image); break;
+            case 2: cv::imshow(main_window, hue_image); break;
+            case 3: cv::imshow(main_window, blurred); break;
+            case 4: cv::imshow(main_window, edges); break;
+            }
+
+            // ----- key input handling -----
 
             // waiting 30ms should be enough to display and capture input
             int key = cv::waitKey(30);
@@ -177,7 +267,17 @@ int main() {
                     save_image(webcam_image);
                     break;
 
+                case 32: // space bar
+                    //cycle through shown images
+                    if (++show > 4)
+                        show = 0;
+                    break;
+
+                case -1: // timeout
+                    break;
+
             default:
+                std::cout << "Pressed: " << key << '\n';
                 break;
             }
         }
