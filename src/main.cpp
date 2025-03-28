@@ -13,41 +13,6 @@
 #if CVC_PLATFORM != CVC_PLATFORM_WINDOWS
     #error "Currently only Windows is supported (webcam API)"
 #endif
-/*
-
-  ## Python sketch, should be a fair starting point
-
-import cv2
-import numpy as np
-
-# Load the gear image
-image = cv2.imread('gear.png')
-gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-# Threshold the image
-_, thresh = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
-
-# Find contours
-contours, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-
-# Detect the largest contour (assumed to be the gear)
-largest_contour = max(contours, key=cv2.contourArea)
-
-# Approximate the contour for teeth detection
-epsilon = 0.01 * cv2.arcLength(largest_contour, True)
-approx = cv2.approxPolyDP(largest_contour, epsilon, True)
-
-# Count the number of vertices in approximated contour
-teeth_count = len(approx)
-
-print(f"Number of teeth: {teeth_count}")
-
-# Visualize the result
-cv2.drawContours(image, [largest_contour], -1, (0, 255, 0), 2)
-cv2.imshow('Gear', image)
-cv2.waitKey(0)
-cv2.destroyAllWindows()
- */
 
 void save_image(const cv::Mat& img) {
     if (img.empty()) {
@@ -123,11 +88,36 @@ Resolution select_resolution(int camera_id = 0) {
     return result;
 }
 
-int main() {
+std::filesystem::path find_data_folder(const std::filesystem::path& exe_path) {
+    namespace fs = std::filesystem;
+
+    fs::path current_path = exe_path;
+
+    while (current_path.has_parent_path()) {
+        if (fs::exists(current_path / "data"))
+            return current_path / "data";
+
+        current_path = current_path.parent_path();
+    }
+
+    throw std::runtime_error("Failed to find data folder");
+}
+
+int main(int, char* argv[]) {
+    namespace fs = std::filesystem;
+
     std::cout << "Starting Counting...\n";
     std::cout << "Running on: " << cvc::ePlatform::current << '\n';
     std::cout << "Built " << cvc::get_days_since_build() << " days ago\n";
 
+    fs::path exe_path(argv[0]);
+    auto data_path = find_data_folder(exe_path);
+    std::cout << "Exe path: " << exe_path.string() << '\n';
+    std::cout << "Data path: " << data_path.string() << '\n';
+
+    return 0;
+}
+/*
     // figure out an appropriate openCV video I/O backend
     auto capture_backends = cv::videoio_registry::getBackends();
     auto camera_backends = cv::videoio_registry::getCameraBackends();
@@ -287,3 +277,4 @@ int main() {
 
     return 0;
 }
+ */
