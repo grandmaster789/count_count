@@ -5,6 +5,8 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio/registry.hpp>
+
+
 #include <chrono>
 #include <format>
 #include <filesystem>
@@ -13,6 +15,8 @@
 #if CVC_PLATFORM != CVC_PLATFORM_WINDOWS
     #error "Currently only Windows is supported (webcam API)"
 #endif
+
+int g_Sensitivity = 255;
 
 void save_image(const cv::Mat& img) {
     if (img.empty()) {
@@ -103,6 +107,23 @@ std::filesystem::path find_data_folder(const std::filesystem::path& exe_path) {
     throw std::runtime_error("Failed to find data folder");
 }
 
+static void track_sensitivity_changed(int, void*) {
+
+}
+
+static void main_window_mouse_event(
+    int evt,
+    int x,
+    int y,
+    int flags,
+    void* userdata
+) {
+    // https://docs.opencv.org/4.11.0/d7/dfc/group__highgui.html#gab7aed186e151d5222ef97192912127a4
+    switch (evt) {
+
+    }
+}
+
 int main(int, char* argv[]) {
     namespace fs = std::filesystem;
 
@@ -115,9 +136,6 @@ int main(int, char* argv[]) {
     std::cout << "Exe path: " << exe_path.string() << '\n';
     std::cout << "Data path: " << data_path.string() << '\n';
 
-    return 0;
-}
-/*
     // figure out an appropriate openCV video I/O backend
     auto capture_backends = cv::videoio_registry::getBackends();
     auto camera_backends = cv::videoio_registry::getCameraBackends();
@@ -146,7 +164,9 @@ int main(int, char* argv[]) {
         std::cout << "Selected resolution: " << res << '\n';
 
         // for this project, it really doesn't matter all that much which API is used
-        cv::VideoCapture webcam(0);
+
+        // cv::VideoCapture webcam(0); // live webcam
+        cv::VideoCapture webcam((data_path / "test_gear_001.jpg").string());
         if (!webcam.isOpened()) {
             std::cerr << "Cannot open webcam\n";
             return -1;
@@ -157,21 +177,32 @@ int main(int, char* argv[]) {
 
         cv::String main_window = "Webcam Video Stream";
         cv::namedWindow(main_window, cv::WINDOW_KEEPRATIO | cv::WINDOW_AUTOSIZE); // create resizable window
+        cv::createTrackbar("Sensitivity", main_window, &g_Sensitivity, 255, track_sensitivity_changed);
+        cv::setMouseCallback(main_window, main_window_mouse_event);
 
+        cv::Mat source_image;      // BGR
         cv::Mat webcam_image;      // BGR
         cv::Mat hsv_image;         // HSV
         cv::Mat hue_image;         // grayscale (hue)
-        cv::Mat blurred;           // grayscale
-        cv::Mat edges;
-        cv::Mat thresholded_image; // grayscale
 
         int show = 0;
+
+        webcam >> source_image; // test video can only be grabbed once
+
+        cv::SimpleBlobDetector::Params blob_detector_params;
+        blob_detector_params.filterByColor = true;
+        blob_detector_params.blobColor = 0;
+        blob_detector_params.collectContours = true;
+        blob_detector_params.filterByConvexity = true;
+        blob_detector_params.minThreshold = 0;
+        blob_detector_params.maxThreshold = 10;
+        auto blob_detector = cv::SimpleBlobDetector::create(blob_detector_params);
 
         // press 'q' or escape to terminate the loop
         bool done = false;
         while (!done) {
             // ----- video input -----
-            webcam >> webcam_image;
+            webcam_image = source_image.clone();
 
             if (webcam_image.empty()) {
                 std::cerr << "Failed to retrieve image from webcam; exiting application\n";
@@ -183,19 +214,12 @@ int main(int, char* argv[]) {
                 hsv_image.create(webcam_image.size(), CV_8UC3);
             if (hue_image.empty())
                 hue_image.create(webcam_image.size(), CV_8UC1);
-            if (blurred.empty())
-                blurred.create(webcam_image.size(), CV_8UC1);
-            if (edges.empty())
-                edges.create(webcam_image.size(), CV_8UC1);
-            if (thresholded_image.empty())
-                thresholded_image.create(webcam_image.size(), CV_8UC1);
+
 
             // ----- video processing -----
             cv::cvtColor(webcam_image, hsv_image, cv::COLOR_BGR2HSV_FULL);
             int channel_selection[] = {1, 0};
             cv::mixChannels(&hsv_image, 1, &hue_image, 1, channel_selection, 1);
-            cv::GaussianBlur(hue_image, blurred, cv::Size(5, 5), 0); // slight blur seems to improve results
-            cv::Canny(blurred, edges, 100, 200);
 
             std::vector<std::vector<cv::Point>> contours;
             std::vector<cv::Vec4i> hierarchy;
@@ -277,4 +301,3 @@ int main(int, char* argv[]) {
 
     return 0;
 }
- */
