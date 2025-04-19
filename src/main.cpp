@@ -6,6 +6,13 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio/registry.hpp>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+#undef STB_IMAGE_IMPLEMENTATION
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb_image_write.h>
+#undef STB_IMAGE_WRITE_IMPLEMENTATION
 
 #include <chrono>
 #include <format>
@@ -13,10 +20,86 @@
 #include <fstream>
 
 #if CVC_PLATFORM != CVC_PLATFORM_WINDOWS
-    #error "Currently only Windows is supported (webcam API)"
+    #error "Currently only Windows is supported"
 #endif
 
+cv::Mat g_source_image;      // BGR
+cv::Mat g_webcam_image;      // BGR
+cv::Mat g_hsv_image;         // HSV
+cv::Mat g_hue_image;         // grayscale (hue)
+
 int g_Sensitivity = 255;
+
+cv::SimpleBlobDetector::Params g_blob_detector_params;
+cv::Ptr<cv::SimpleBlobDetector> g_blob_detector;
+
+using StbResource = std::unique_ptr<stbi_uc, decltype(&stbi_image_free)>;
+
+cv::Mat load_jpg(const std::filesystem::path& p) {
+    int width, height, channels;
+
+    StbResource raw_data(
+        stbi_load(
+            p.string().c_str(),
+            &width,
+            &height,
+            &channels,
+            0
+        ),
+        &stbi_image_free
+    );
+
+    if (!raw_data) {
+        std::cout << "Failed to load jpg: " << p.string() << '\n';
+        std::cout << stbi_failure_reason();
+        return {};
+    }
+
+    switch (channels) {
+        case 1: return { height, width, CV_8UC1, raw_data.get() };
+        case 3: {
+            // assume data is in RGB -- openCV expects BGR so convert it
+            cv::Mat rgb(height, width, CV_8UC3, raw_data.get());
+            cv::Mat bgr;
+            cv::cvtColor(rgb, bgr, cv::COLOR_RGB2BGR);
+            return bgr;
+        }
+
+        case 4: return { height, width, CV_8UC4, raw_data.get() };
+
+    default:
+        return {};
+    }
+}
+
+void save_jpg(const cv::Mat& image, const std::filesystem::path& p) {
+    // openCV defaults to BGR images, while stb defaults to RGB... copy and convert
+
+    if (image.channels() == 3) {
+        cv::Mat rgb;
+
+        cv::cvtColor(image, rgb, cv::COLOR_BGR2RGB);
+
+        stbi_write_jpg(
+                p.string().c_str(),
+                rgb.cols,
+                rgb.rows,
+                rgb.channels(),
+                rgb.data,
+                90 // compression ratio
+        );
+    }
+    else {
+        stbi_write_jpg(
+                p.string().c_str(),
+                image.cols,
+                image.rows,
+                image.channels(),
+                image.data,
+                90 // compression ratio
+        );
+    }
+}
 
 void save_image(const cv::Mat& img) {
     if (img.empty()) {
@@ -25,11 +108,11 @@ void save_image(const cv::Mat& img) {
     }
 
     auto timestamped_filename = std::format(
-            "screengrab_{0:%F}_{0:%OH%OM%OS}.jpg",
-            std::chrono::system_clock::now()
+        "screengrab_{0:%F}_{0:%OH%OM%OS}.jpg",
+        std::chrono::system_clock::now()
     );
 
-    cv::imwrite(timestamped_filename, img);
+    save_jpg(img, timestamped_filename);
     std::cout << "Saved " << timestamped_filename << '\n';
 }
 
@@ -70,10 +153,10 @@ Resolution select_resolution(int camera_id = 0) {
     }
 
     std::vector<Resolution> resolutions = {
-            Resolution { 3840, 2160 }, // 4k
-            Resolution { 1920, 1080},  // 1080p
-            Resolution { 1280, 720 },  // 720p
-            Resolution { 640,  480 }   // 480p
+        Resolution { 3840, 2160 }, // 4k
+        Resolution { 1920, 1080},  // 1080p
+        Resolution { 1280, 720 },  // 720p
+        Resolution { 640,  480 }   // 480p
     };
 
     size_t selected_resolution = 0;
@@ -107,21 +190,35 @@ std::filesystem::path find_data_folder(const std::filesystem::path& exe_path) {
     throw std::runtime_error("Failed to find data folder");
 }
 
-static void track_sensitivity_changed(int, void*) {
+void reset_detector() {
+    g_blob_detector = cv::SimpleBlobDetector::create(g_blob_detector_params);
+}
 
+static void track_sensitivity_changed(
+    int   new_value,
+    void* /* userdata */
+) {
+    g_blob_detector_params.maxThreshold = static_cast<float>(new_value) / 100.0f;
+    reset_detector();
 }
 
 static void main_window_mouse_event(
-    int evt,
-    int x,
-    int y,
-    int flags,
-    void* userdata
+    int   evt,
+    int   x,
+    int   y,
+    int   /* flags ~ cv::MouseEventFlags */,
+    void* /* userdata */
 ) {
     // https://docs.opencv.org/4.11.0/d7/dfc/group__highgui.html#gab7aed186e151d5222ef97192912127a4
     switch (evt) {
-
-    }
+    case cv::MouseEventTypes::EVENT_LBUTTONDOWN:
+        std::cout << "Clicked at (" << x << ", " << y << ")\n";
+        g_blob_detector_params.blobColor = g_hue_image.at<unsigned char>(y, x);
+        reset_detector();
+        break;
+    default:
+        break;
+    };
 }
 
 int main(int, char* argv[]) {
@@ -133,30 +230,16 @@ int main(int, char* argv[]) {
 
     fs::path exe_path(argv[0]);
     auto data_path = find_data_folder(exe_path);
-    std::cout << "Exe path: " << exe_path.string() << '\n';
+    std::cout << "Exe path:  " << exe_path.string() << '\n';
     std::cout << "Data path: " << data_path.string() << '\n';
 
-    // figure out an appropriate openCV video I/O backend
-    auto capture_backends = cv::videoio_registry::getBackends();
-    auto camera_backends = cv::videoio_registry::getCameraBackends();
-    auto stream_backends = cv::videoio_registry::getStreamBackends();
-    auto writer_backends = cv::videoio_registry::getWriterBackends();
-
-    std::cout << "Capture backends: \n";
-    for (const auto& x: capture_backends)
-        std::cout << ' ' << cv::videoio_registry::getBackendName(x) << '\n';
-
-    std::cout << "Camera backends: \n";
-    for (const auto& x: camera_backends)
-        std::cout << ' ' << cv::videoio_registry::getBackendName(x) << '\n';
-
-    std::cout << "Stream backends: \n";
-    for (const auto& x: stream_backends)
-        std::cout << ' ' << cv::videoio_registry::getBackendName(x) << '\n';
-
-    std::cout << "Writer backends: \n";
-    for (const auto& x: writer_backends)
-        std::cout << ' ' << cv::videoio_registry::getBackendName(x) << '\n';
+    // default detector parameters
+    g_blob_detector_params.filterByColor     = true;
+    g_blob_detector_params.blobColor         = 0;
+    g_blob_detector_params.collectContours   = true;
+    g_blob_detector_params.filterByConvexity = true;
+    g_blob_detector_params.minThreshold      = 0;
+    g_blob_detector_params.maxThreshold      = 10;
 
     {
         auto res = select_resolution();
@@ -164,63 +247,50 @@ int main(int, char* argv[]) {
         std::cout << "Selected resolution: " << res << '\n';
 
         // for this project, it really doesn't matter all that much which API is used
-
-        // cv::VideoCapture webcam(0); // live webcam
-        cv::VideoCapture webcam((data_path / "test_gear_001.jpg").string());
+        /*
+        cv::VideoCapture webcam(0); // live webcam
         if (!webcam.isOpened()) {
             std::cerr << "Cannot open webcam\n";
             return -1;
         }
-
         webcam.set(cv::CAP_PROP_FRAME_WIDTH, res.width);
         webcam.set(cv::CAP_PROP_FRAME_HEIGHT, res.height);
+        */
+
+        // load via stb image
+        auto static_image = load_jpg((data_path / "test_gear_003.jpg"));
 
         cv::String main_window = "Webcam Video Stream";
         cv::namedWindow(main_window, cv::WINDOW_KEEPRATIO | cv::WINDOW_AUTOSIZE); // create resizable window
-        cv::createTrackbar("Sensitivity", main_window, &g_Sensitivity, 255, track_sensitivity_changed);
+        cv::createTrackbar("Sensitivity", main_window, nullptr, 100, track_sensitivity_changed);
         cv::setMouseCallback(main_window, main_window_mouse_event);
 
-        cv::Mat source_image;      // BGR
-        cv::Mat webcam_image;      // BGR
-        cv::Mat hsv_image;         // HSV
-        cv::Mat hue_image;         // grayscale (hue)
-
         int show = 0;
-
-        webcam >> source_image; // test video can only be grabbed once
-
-        cv::SimpleBlobDetector::Params blob_detector_params;
-        blob_detector_params.filterByColor = true;
-        blob_detector_params.blobColor = 0;
-        blob_detector_params.collectContours = true;
-        blob_detector_params.filterByConvexity = true;
-        blob_detector_params.minThreshold = 0;
-        blob_detector_params.maxThreshold = 10;
-        auto blob_detector = cv::SimpleBlobDetector::create(blob_detector_params);
 
         // press 'q' or escape to terminate the loop
         bool done = false;
         while (!done) {
             // ----- video input -----
-            webcam_image = source_image.clone();
+            g_webcam_image = static_image.clone(); // single image
+            //webcam >> g_webcam_image; // live video
 
-            if (webcam_image.empty()) {
+            if (g_webcam_image.empty()) {
                 std::cerr << "Failed to retrieve image from webcam; exiting application\n";
                 break;
             }
 
             // if the other images haven't been initialized yet, do so now
-            if (hsv_image.empty())
-                hsv_image.create(webcam_image.size(), CV_8UC3);
-            if (hue_image.empty())
-                hue_image.create(webcam_image.size(), CV_8UC1);
-
+            if (g_hsv_image.empty())
+                g_hsv_image.create(g_webcam_image.size(), CV_8UC3);
+            if (g_hue_image.empty())
+                g_hue_image.create(g_webcam_image.size(), CV_8UC1);
 
             // ----- video processing -----
-            cv::cvtColor(webcam_image, hsv_image, cv::COLOR_BGR2HSV_FULL);
+            cv::cvtColor(g_webcam_image, g_hsv_image, cv::COLOR_BGR2HSV_FULL);
             int channel_selection[] = {1, 0};
-            cv::mixChannels(&hsv_image, 1, &hue_image, 1, channel_selection, 1);
+            cv::mixChannels(&g_hsv_image, 1, &g_hue_image, 1, channel_selection, 1);
 
+            /*
             std::vector<std::vector<cv::Point>> contours;
             std::vector<cv::Vec4i> hierarchy;
             cv::findContours(edges, contours, hierarchy, cv::RETR_TREE, cv::CHAIN_APPROX_SIMPLE);
@@ -253,14 +323,15 @@ int main(int, char* argv[]) {
                         hierarchy
                 );
             }
+            */
 
             // ----- rendering -----
             switch (show) {
-            case 0: cv::imshow(main_window, webcam_image); break;
-            case 1: cv::imshow(main_window, hsv_image); break;
-            case 2: cv::imshow(main_window, hue_image); break;
-            case 3: cv::imshow(main_window, blurred); break;
-            case 4: cv::imshow(main_window, edges); break;
+            case 0: cv::imshow(main_window, g_webcam_image); break;
+            case 1: cv::imshow(main_window, g_hsv_image); break;
+            case 2: cv::imshow(main_window, g_hue_image); break;
+            //case 3: cv::imshow(main_window, blurred); break;
+            //case 4: cv::imshow(main_window, edges); break;
             }
 
             // ----- key input handling -----
@@ -278,7 +349,7 @@ int main(int, char* argv[]) {
 
                 case 'g':
                 case 'G':
-                    save_image(webcam_image);
+                    save_image(g_webcam_image);
                     break;
 
                 case 32: // space bar

@@ -5,5 +5,8 @@
   "dependencies" : [ {
     "name" : "opencv4",
     "version>=" : "4.10.0"
+  }, {
+    "name" : "stb",
+    "version>=" : "2024-07-29#1"
   } ]
 }

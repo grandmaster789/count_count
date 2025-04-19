@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(OpenCV REQUIRED)
+find_package(Stb REQUIRED)
 
 add_executable(CountVonCount)
 
@@ -23,6 +24,7 @@ target_sources            (CountVonCount PRIVATE ${CountSources})
 target_include_directories(CountVonCount PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
         ${OpenCV_INCLUDE_DIRS}
+        ${Stb_INCLUDE_DIR}
 )
 target_link_libraries     (CountVonCount PRIVATE
         ${OpenCV_LIBS}
@@ -32,6 +34,10 @@ target_link_directories   (CountVonCount PRIVATE
 )
 
 if (MSVC)
+    target_compile_definitions(CountVonCount PRIVATE
+            _CRT_SECURE_NO_WARNINGS
+    )
+
     target_compile_options(CountVonCount PRIVATE
             /W4 # Enable all warnings
             /WX # Warnings as errors
