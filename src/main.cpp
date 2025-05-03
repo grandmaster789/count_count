@@ -24,14 +24,15 @@
 #endif
 
 cv::Mat g_source_image;      // BGR
+cv::Mat g_background;        // BGR
+cv::Mat g_foreground;        // BGR
+cv::Mat g_foreground_mask;   // grayscale
 cv::Mat g_webcam_image;      // BGR
 cv::Mat g_hsv_image;         // HSV
 cv::Mat g_hue_image;         // grayscale (hue)
 
-int g_Sensitivity = 255;
-
-cv::SimpleBlobDetector::Params g_blob_detector_params;
-cv::Ptr<cv::SimpleBlobDetector> g_blob_detector;
+uint8_t g_selected_hue  = 0;
+int     g_hue_tolerance = 10;
 
 using StbResource = std::unique_ptr<stbi_uc, decltype(&stbi_image_free)>;
 
@@ -116,6 +117,18 @@ void save_image(const cv::Mat& img) {
     std::cout << "Saved " << timestamped_filename << '\n';
 }
 
+void save_background(const cv::Mat& img) {
+    if (img.empty()) {
+        std::cout << "Cannot save empty image as background; skipping\n";
+        return;
+    }
+
+    g_background = img.clone();
+
+    save_jpg(img, "background.jpg");
+    std::cout << "Saved background.jpg\n";
+}
+
 struct Resolution {
     int width, height;
 
@@ -124,6 +137,8 @@ struct Resolution {
         return os;
     }
 };
+
+Resolution g_webcam_resolution;
 
 // the openCV api doesn't provide a method to actually query supported resolutions
 // so we'll just check a couple common ones
@@ -140,18 +155,36 @@ bool check_resolution(int camera_id, const Resolution& res) {
         (actual_height == res.height);
 }
 
-Resolution select_resolution(int camera_id = 0) {
+void save_settings() {
+    std::ofstream cfg("count_count.cfg");
+    cfg
+            << g_webcam_resolution.width << ' ' << g_webcam_resolution.height << '\n'
+            << static_cast<int>(g_selected_hue) << ' ' << static_cast<int>(g_hue_tolerance) << '\n';
+}
+
+void load_settings(int camera_id = 0) {
+    // if a background image was saved, load it
+    g_background = load_jpg("background.jpg"); // if this fails, the background is an empty set
+
     // if a resolution was selected before, use that
     if (std::filesystem::exists("count_count.cfg")) {
         std::ifstream cfg("count_count.cfg");
-        int width = 0;
-        int height = 0;
+        int width         = 0;
+        int height        = 0;
+        int selected_hue  = 0;
+        int hue_tolerance = 0;
 
-        cfg >> width >> height;
+        cfg >> width >> height
+            >> selected_hue >> hue_tolerance;
 
-        return { width, height };
+        g_webcam_resolution = { width, height };
+        g_selected_hue  = static_cast<uint8_t>(selected_hue);
+        g_hue_tolerance = hue_tolerance;
+
+        return;
     }
 
+    // no settings available, provide some defaults
     std::vector<Resolution> resolutions = {
         Resolution { 3840, 2160 }, // 4k
         Resolution { 1920, 1080},  // 1080p
@@ -166,13 +199,7 @@ Resolution select_resolution(int camera_id = 0) {
             break;
     }
 
-    auto result = resolutions[selected_resolution];
-
-    // cache the result on disk
-    std::ofstream cfg("count_count.cfg");
-    cfg << result.width << ' ' << result.height;
-
-    return result;
+    g_webcam_resolution = resolutions[selected_resolution];
 }
 
 std::filesystem::path find_data_folder(const std::filesystem::path& exe_path) {
@@ -190,16 +217,12 @@ std::filesystem::path find_data_folder(const std::filesystem::path& exe_path) {
     throw std::runtime_error("Failed to find data folder");
 }
 
-void reset_detector() {
-    g_blob_detector = cv::SimpleBlobDetector::create(g_blob_detector_params);
-}
-
 static void track_sensitivity_changed(
     int   new_value,
     void* /* userdata */
 ) {
-    g_blob_detector_params.maxThreshold = static_cast<float>(new_value) / 100.0f;
-    reset_detector();
+    g_hue_tolerance = static_cast<uint8_t>(new_value * 255 / 100);
+    std::cout << "Hue tolerance is " << static_cast<int>(g_hue_tolerance) << '\n';
 }
 
 static void main_window_mouse_event(
@@ -213,15 +236,40 @@ static void main_window_mouse_event(
     switch (evt) {
     case cv::MouseEventTypes::EVENT_LBUTTONDOWN:
         std::cout << "Clicked at (" << x << ", " << y << ")\n";
-        g_blob_detector_params.blobColor = g_hue_image.at<unsigned char>(y, x);
-        reset_detector();
+        g_selected_hue = g_hue_image.at<unsigned char>(y, x);
+        std::cout << "Hue is " << static_cast<int>(g_selected_hue) << '\n';
         break;
+
     default:
         break;
     };
 }
 
+struct HueRange {
+    uint8_t m_min_hue = 0;
+    uint8_t m_max_hue = 255;
+};
+
+HueRange determine_hue_range() {
+    int hue = g_selected_hue;
+    int min_hue = hue - g_hue_tolerance / 2;
+    int max_hue = hue + g_hue_tolerance / 2;
+
+    if (min_hue < 0)
+        min_hue = 0;
+
+    if (max_hue > 255)
+        max_hue = 255;
+
+    return {
+        static_cast<uint8_t>(min_hue),
+        static_cast<uint8_t>(max_hue)
+    };
+}
+
 int main(int, char* argv[]) {
+    static const bool use_live_video = true;
+
     namespace fs = std::filesystem;
 
     std::cout << "Starting Counting...\n";
@@ -233,36 +281,32 @@ int main(int, char* argv[]) {
     std::cout << "Exe path:  " << exe_path.string() << '\n';
     std::cout << "Data path: " << data_path.string() << '\n';
 
-    // default detector parameters
-    g_blob_detector_params.filterByColor     = true;
-    g_blob_detector_params.blobColor         = 0;
-    g_blob_detector_params.collectContours   = true;
-    g_blob_detector_params.filterByConvexity = true;
-    g_blob_detector_params.minThreshold      = 0;
-    g_blob_detector_params.maxThreshold      = 10;
-
     {
-        auto res = select_resolution();
+        load_settings();
 
-        std::cout << "Selected resolution: " << res << '\n';
+        std::cout << "Selected resolution: " << g_webcam_resolution << '\n';
+
+        cv::Mat static_image;
+        cv::VideoCapture webcam;
 
         // for this project, it really doesn't matter all that much which API is used
-        /*
-        cv::VideoCapture webcam(0); // live webcam
-        if (!webcam.isOpened()) {
-            std::cerr << "Cannot open webcam\n";
-            return -1;
+        if constexpr (use_live_video) {
+            webcam = cv::VideoCapture(0);
+            if (!webcam.isOpened()) {
+                std::cerr << "Cannot open webcam\n";
+                return -1;
+            }
+            webcam.set(cv::CAP_PROP_FRAME_WIDTH,  g_webcam_resolution.width);
+            webcam.set(cv::CAP_PROP_FRAME_HEIGHT, g_webcam_resolution.height);
         }
-        webcam.set(cv::CAP_PROP_FRAME_WIDTH, res.width);
-        webcam.set(cv::CAP_PROP_FRAME_HEIGHT, res.height);
-        */
-
-        // load via stb image
-        auto static_image = load_jpg((data_path / "test_gear_003.jpg"));
+        else {
+            // load via stb image
+            static_image = load_jpg((data_path / "test_gear_003.jpg"));
+        }
 
         cv::String main_window = "Webcam Video Stream";
         cv::namedWindow(main_window, cv::WINDOW_KEEPRATIO | cv::WINDOW_AUTOSIZE); // create resizable window
-        cv::createTrackbar("Sensitivity", main_window, nullptr, 100, track_sensitivity_changed);
+        cv::createTrackbar("Sensitivity", main_window, &g_hue_tolerance, 100, track_sensitivity_changed);
         cv::setMouseCallback(main_window, main_window_mouse_event);
 
         int show = 0;
@@ -271,8 +315,12 @@ int main(int, char* argv[]) {
         bool done = false;
         while (!done) {
             // ----- video input -----
-            g_webcam_image = static_image.clone(); // single image
-            //webcam >> g_webcam_image; // live video
+            if constexpr(use_live_video) {
+                webcam >> g_webcam_image; // live video
+            }
+            else {
+                g_webcam_image = static_image.clone(); // single image
+            }
 
             if (g_webcam_image.empty()) {
                 std::cerr << "Failed to retrieve image from webcam; exiting application\n";
@@ -284,46 +332,44 @@ int main(int, char* argv[]) {
                 g_hsv_image.create(g_webcam_image.size(), CV_8UC3);
             if (g_hue_image.empty())
                 g_hue_image.create(g_webcam_image.size(), CV_8UC1);
+            if (g_foreground.empty())
+                g_foreground.create(g_webcam_image.size(), CV_8UC3);
+            if (g_foreground_mask.empty())
+                g_foreground_mask.create(g_webcam_image.size(), CV_8UC1);
 
             // ----- video processing -----
+            {
+                // background filtering doesn't work great during testing, probably need to compensate for automatic
+                // white balance as well
+                //cv::absdiff(g_webcam_image, g_background, g_foreground);
+            }
+
             cv::cvtColor(g_webcam_image, g_hsv_image, cv::COLOR_BGR2HSV_FULL);
             int channel_selection[] = {1, 0};
             cv::mixChannels(&g_hsv_image, 1, &g_hue_image, 1, channel_selection, 1);
 
-            /*
+            auto [min_hue, max_hue] = determine_hue_range();
+            cv::inRange(g_hue_image, cv::Scalar(min_hue), cv::Scalar(max_hue), g_foreground_mask);
+            //cv::blur(g_foreground_mask, g_foreground_mask, cv::Size(5, 5));
+
+            {
+                static const int num_iterations = 3;
+                cv::Mat tmp;
+                cv::dilate(g_foreground_mask, tmp, cv::Mat(), cv::Point(-1, -1), num_iterations);
+                cv::erode(tmp,                tmp, cv::Mat(), cv::Point(-1, -1), num_iterations * 2);
+                cv::dilate(tmp, g_foreground_mask, cv::Mat(), cv::Point(-1, -1), num_iterations);
+            }
+
+            g_foreground = cv::Mat::zeros(g_webcam_image.size(), CV_8UC3);
+            cv::copyTo(g_webcam_image, g_foreground, g_foreground_mask);
+
             std::vector<std::vector<cv::Point>> contours;
             std::vector<cv::Vec4i> hierarchy;
-            cv::findContours(edges, contours, hierarchy, cv::RETR_TREE, cv::CHAIN_APPROX_SIMPLE);
+            cv::findContours(g_foreground_mask, contours, hierarchy, cv::RETR_CCOMP, cv::CHAIN_APPROX_SIMPLE);
 
             if (!contours.empty()) {
-                auto largest_contour_idx = [&] {
-                   int idx = 0;
-                   size_t contour_size = contours[idx].size();
 
-                   for (int i = 0; i < contours.size(); ++i) {
-                       size_t sz = contours[idx].size();
-                       if (sz > contour_size) {
-                           idx = i;
-                           contour_size = sz;
-                       }
-                   }
-
-                   return idx;
-                }();
-
-                std::cout << largest_contour_idx << " => " << contours[largest_contour_idx].size() << '\n';
-
-                cv::drawContours(
-                        webcam_image,
-                        contours,
-                        largest_contour_idx,
-                        cv::Scalar(128, 255, 255),
-                        5,
-                        cv::LINE_8,
-                        hierarchy
-                );
             }
-            */
 
             // ----- rendering -----
             switch (show) {
@@ -333,6 +379,8 @@ int main(int, char* argv[]) {
             //case 3: cv::imshow(main_window, blurred); break;
             //case 4: cv::imshow(main_window, edges); break;
             }
+
+            cv::imshow("foreground", g_foreground);
 
             // ----- key input handling -----
 
@@ -352,6 +400,11 @@ int main(int, char* argv[]) {
                     save_image(g_webcam_image);
                     break;
 
+                case 'b':
+                case 'B':
+                    save_background(g_webcam_image);
+                    break;
+
                 case 32: // space bar
                     //cycle through shown images
                     if (++show > 4)
@@ -367,6 +420,8 @@ int main(int, char* argv[]) {
             }
         }
     }
+
+    save_settings();
 
     std::cout << "Completed\n";
 
