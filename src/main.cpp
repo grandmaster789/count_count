@@ -18,6 +18,7 @@
 #include <format>
 #include <filesystem>
 #include <fstream>
+#include <numbers>
 
 #if CVC_PLATFORM != CVC_PLATFORM_WINDOWS
     #error "Currently only Windows is supported"
@@ -350,37 +351,177 @@ int main(int, char* argv[]) {
 
             auto [min_hue, max_hue] = determine_hue_range();
             cv::inRange(g_hue_image, cv::Scalar(min_hue), cv::Scalar(max_hue), g_foreground_mask);
-            //cv::blur(g_foreground_mask, g_foreground_mask, cv::Size(5, 5));
 
             {
-                static const int num_iterations = 3;
-                cv::Mat tmp;
-                cv::dilate(g_foreground_mask, tmp, cv::Mat(), cv::Point(-1, -1), num_iterations);
-                cv::erode(tmp,                tmp, cv::Mat(), cv::Point(-1, -1), num_iterations * 2);
-                cv::dilate(tmp, g_foreground_mask, cv::Mat(), cv::Point(-1, -1), num_iterations);
+                // apply slight blur to get rid of noise and small details
+                cv::medianBlur(g_foreground_mask, g_foreground_mask, 9);
             }
 
             g_foreground = cv::Mat::zeros(g_webcam_image.size(), CV_8UC3);
-            cv::copyTo(g_webcam_image, g_foreground, g_foreground_mask);
+            cv::copyTo(
+                g_webcam_image,
+                g_foreground,
+                g_foreground_mask
+            );
 
             std::vector<std::vector<cv::Point>> contours;
             std::vector<cv::Vec4i> hierarchy;
-            cv::findContours(g_foreground_mask, contours, hierarchy, cv::RETR_CCOMP, cv::CHAIN_APPROX_SIMPLE);
+
+            // https://docs.opencv.org/3.4/d3/dc0/group__imgproc__shape.html#ga17ed9f5d79ae97bd4c7cf18403e1689a
+            cv::findContours(
+                g_foreground_mask,
+                contours,
+                hierarchy,
+                cv::RETR_CCOMP, // organizes in multi-level list, with external boundaries at the top level
+                cv::CHAIN_APPROX_SIMPLE
+            );
 
             if (!contours.empty()) {
+                int    idx                   = 0;
+                int    largest_component_idx = 0;
+                double max_area              = 0;
 
+                // loop through the top-level contours (the iteration sequence is described in the hierarchy vector, and terminates with a negative value)
+                // and find the biggest one
+                for (; idx >= 0; idx = hierarchy[idx][0]) {
+                    const auto& cont = contours[idx];
+
+                    double area = std::fabs(cv::contourArea(cv::Mat(cont)));
+
+                    if (area > max_area) {
+                        max_area = area;
+                        largest_component_idx = idx;
+                    }
+                }
+
+                cv::drawContours(
+                    g_webcam_image,
+                    contours,
+                    largest_component_idx,
+                    cv::Scalar(0, 0, 255),
+                    1, // thickness, or cv::FILLED to fill the entire thing
+                    cv::LINE_8,
+                    hierarchy
+                );
+
+                // find centroid of the contour
+
+                // https://docs.opencv.org/3.4/d3/dc0/group__imgproc__shape.html#ga556a180f43cab22649c23ada36a8a139
+                auto moment = cv::moments(
+                    contours[largest_component_idx],
+                    false
+                );
+                auto centroid_d = cv::Point2d(
+                    moment.m10 / moment.m00,
+                    moment.m01 / moment.m00
+                );
+                auto centroid_i = cv::Point2i(
+                    static_cast<int>(centroid_d.x),
+                    static_cast<int>(centroid_d.y)
+                );
+
+                cv::circle(
+                    g_foreground,               // dst
+                    centroid_d,                 // center
+                    8,                          // radius
+                    cv::Scalar(255, 255, 255),  // color
+                    -1,                         // thickness (-1 for fill)
+                    8,                          // line type
+                    0                           // shift
+                );
+
+                const auto& largest_contour = contours[largest_component_idx];
+
+                std::vector<double> normalized_distances;
+                std::vector<double> distances;
+                std::vector<double> angles;
+
+                normalized_distances.reserve(largest_contour.size());
+                distances.reserve(largest_contour.size());
+                angles.reserve(largest_contour.size());
+
+                double prev_central_angle = -std::numeric_limits<double>::infinity();
+                auto   last_pt            = largest_contour[0];
+
+                auto extract = [&](const auto& pt_a, const auto& pt_b) {
+                    cv::Point2i d1 = centroid_i - pt_a;
+                    cv::Point2i d2 = centroid_i - pt_b;
+
+                    auto delta_angle   = std::atan2(d1.x - d2.x, d1.y - d2.y);
+                    auto central_angle = std::atan2(d1.x, d1.y);
+                    auto distance      = std::hypot(d1.x, d1.y);
+
+                    // normalize distance across angle; only keep the ones with a monotonically increasing central angle
+                    using std::numbers::pi;
+                    if ((delta_angle > 0) && (central_angle > prev_central_angle)) {
+                        normalized_distances.push_back(distance * 2.0 * pi / delta_angle);
+                        angles.push_back(central_angle);
+                        distances.push_back(distance);
+
+                        prev_central_angle = central_angle;
+                    }
+                };
+
+                for (size_t i = 1; i < largest_contour.size(); ++i) {
+                    const auto& pt = largest_contour[i];
+
+                    cv::line(g_foreground, centroid_i, pt, cv::Scalar(255,255,255));
+
+                    extract(pt, last_pt);
+                    last_pt = pt;
+                }
+
+                // fixup for the first/last point
+                extract(largest_contour.back(), largest_contour.front());
+
+                // debug -- write and dump the sequence in a CSV file
+                if (!std::filesystem::exists("test_sequence.csv")) {
+                    std::ofstream out("test_sequence.csv");
+                    out << "angle, nd\n";
+                    for (size_t i = 0; i < normalized_distances.size(); ++i) {
+                        out << angles[i] << ',' << normalized_distances[i] << '\n';
+                    }
+                }
+
+                // identify clusters in distances
+                
+
+                /*
+                int min_x = 0;
+                int max_x = 0;
+                int min_y = 0;
+                int max_y = 0;
+
+                for (const auto& pt: largest_contour) {
+                    auto delta = centroid_i - pt;
+                    min_x = std::min(min_x, delta.x);
+                    min_y = std::min(min_y, delta.y);
+                    max_x = std::max(max_x, delta.x);
+                    max_y = std::max(max_y, delta.y);
+                }
+
+                int width  = max_x - min_x;
+                int height = max_y - min_y;
+
+                auto rect = cv::Rect(min_x + centroid_i.x, min_y + centroid_i.y, width, height);
+
+                // construct a 1-channel floating point buffer for the ROI
+                auto roi_8uc1 = g_foreground_mask(rect).clone();
+                cv::Mat roi_32fc1;
+
+                roi_8uc1.convertTo(roi_32fc1, CV_32FC1, 1.0 / 255.0); // normalized to [0..1] range
+                cv::imshow("roi", roi_32fc1);
+                */
             }
 
             // ----- rendering -----
             switch (show) {
             case 0: cv::imshow(main_window, g_webcam_image); break;
-            case 1: cv::imshow(main_window, g_hsv_image); break;
-            case 2: cv::imshow(main_window, g_hue_image); break;
-            //case 3: cv::imshow(main_window, blurred); break;
+            case 1: cv::imshow(main_window, g_hsv_image);    break;
+            case 2: cv::imshow(main_window, g_hue_image);    break;
+            case 3: cv::imshow(main_window, g_foreground);   break;
             //case 4: cv::imshow(main_window, edges); break;
             }
-
-            cv::imshow("foreground", g_foreground);
 
             // ----- key input handling -----
 
