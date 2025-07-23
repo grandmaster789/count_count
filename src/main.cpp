@@ -441,13 +441,14 @@ int main(int, char* argv[]) {
                     distances.push_back(distance);
                 }
 
-                // use the average as a threshold
-                auto average_distance = std::reduce(distances.begin(), distances.end(), 0.0) / static_cast<double>(distances.size());
+                // find the largest and smallest distances to the center, use half that as a threshold
+                auto min_max            = std::minmax_element(distances.begin(), distances.end());
+                auto distance_threshold = (*min_max.first + *min_max.second) / 2.0;
 
                 std::vector<uint8_t> tooth_mask(largest_contour.size(), 0);
 
                 for (size_t i = 0; i < largest_contour.size(); ++i)
-                    tooth_mask[i] = (distances[i] < average_distance) ? 1 : 0;
+                    tooth_mask[i] = (distances[i] < distance_threshold) ? 1 : 0;
 
                 // figure out how often the threshold is crossed to determine a tooth count
                 int tooth_count = 0;
