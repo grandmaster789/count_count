@@ -19,6 +19,8 @@
 #include <filesystem>
 #include <fstream>
 #include <numbers>
+#include <numeric>
+#include <algorithm>
 
 #if CVC_PLATFORM != CVC_PLATFORM_WINDOWS
     #error "Currently only Windows is supported"
@@ -381,8 +383,8 @@ int main(int, char* argv[]) {
                 int    largest_component_idx = 0;
                 double max_area              = 0;
 
-                // loop through the top-level contours (the iteration sequence is described in the hierarchy vector, and terminates with a negative value)
-                // and find the biggest one
+                // loop through the top-level contours (the iteration sequence is described in the hierarchy vector,
+                // and terminates with a negative value) and find the biggest one.
                 for (; idx >= 0; idx = hierarchy[idx][0]) {
                     const auto& cont = contours[idx];
 
@@ -432,86 +434,72 @@ int main(int, char* argv[]) {
 
                 const auto& largest_contour = contours[largest_component_idx];
 
-                std::vector<double> normalized_distances;
+                // loop over the largest contour, collect 'similar' distances to the center point
                 std::vector<double> distances;
-                std::vector<double> angles;
-
-                normalized_distances.reserve(largest_contour.size());
-                distances.reserve(largest_contour.size());
-                angles.reserve(largest_contour.size());
-
-                double prev_central_angle = -std::numeric_limits<double>::infinity();
-                auto   last_pt            = largest_contour[0];
-
-                auto extract = [&](const auto& pt_a, const auto& pt_b) {
-                    cv::Point2i d1 = centroid_i - pt_a;
-                    cv::Point2i d2 = centroid_i - pt_b;
-
-                    auto delta_angle   = std::atan2(d1.x - d2.x, d1.y - d2.y);
-                    auto central_angle = std::atan2(d1.x, d1.y);
-                    auto distance      = std::hypot(d1.x, d1.y);
-
-                    // normalize distance across angle; only keep the ones with a monotonically increasing central angle
-                    using std::numbers::pi;
-                    if ((delta_angle > 0) && (central_angle > prev_central_angle)) {
-                        normalized_distances.push_back(distance * 2.0 * pi / delta_angle);
-                        angles.push_back(central_angle);
-                        distances.push_back(distance);
-
-                        prev_central_angle = central_angle;
-                    }
-                };
-
-                for (size_t i = 1; i < largest_contour.size(); ++i) {
-                    const auto& pt = largest_contour[i];
-
-                    cv::line(g_foreground, centroid_i, pt, cv::Scalar(255,255,255));
-
-                    extract(pt, last_pt);
-                    last_pt = pt;
+                for (const auto& pt : largest_contour) {
+                    auto distance = std::hypot(pt.x - centroid_i.x, pt.y - centroid_i.y);
+                    distances.push_back(distance);
                 }
 
-                // fixup for the first/last point
-                extract(largest_contour.back(), largest_contour.front());
+                // use the average as a threshold
+                auto average_distance = std::reduce(distances.begin(), distances.end(), 0.0) / static_cast<double>(distances.size());
 
-                // debug -- write and dump the sequence in a CSV file
-                if (!std::filesystem::exists("test_sequence.csv")) {
-                    std::ofstream out("test_sequence.csv");
-                    out << "angle, nd\n";
-                    for (size_t i = 0; i < normalized_distances.size(); ++i) {
-                        out << angles[i] << ',' << normalized_distances[i] << '\n';
-                    }
+                std::vector<uint8_t> tooth_mask(largest_contour.size(), 0);
+
+                for (size_t i = 0; i < largest_contour.size(); ++i)
+                    tooth_mask[i] = (distances[i] < average_distance) ? 1 : 0;
+
+                // figure out how often the threshold is crossed to determine a tooth count
+                int tooth_count = 0;
+                for (size_t i = 0; i < tooth_mask.size() - 1; ++i)
+                    tooth_count += (tooth_mask[i + 1] != tooth_mask[i]);
+                tooth_count += (tooth_mask.back() != tooth_mask.front());
+
+                // this should be an even number; we've just counted both rising and lowering edges -- report half as the count
+                {
+                    constexpr int    k_FontFace      = cv::FONT_HERSHEY_SIMPLEX;
+                    constexpr double k_FontScale     = 1.0;
+                    constexpr int    k_FontThickness = 3;
+                    const cv::Scalar k_TextColor     = cv::Scalar(255, 255, 255);
+                    const cv::Scalar k_TextBgColor   = cv::Scalar(0, 0, 0);
+                    constexpr int    k_LineThickness = 2;
+                    constexpr int    k_LineType      = cv::LINE_AA;
+
+                    auto tooth_count_half_str = std::to_string(tooth_count / 2);
+
+                    auto text_size = cv::getTextSize(
+                        tooth_count_half_str,
+                        k_FontFace,
+                        k_FontScale,
+                        k_FontThickness,
+                        nullptr
+                    );
+
+                    // simple shadow
+                    cv::putText(
+                        g_webcam_image,
+                        tooth_count_half_str,
+                        centroid_i - cv::Point2i(text_size.width / 2, text_size.height / 2) + cv::Point2i(2, 2),
+                        k_FontFace,
+                        k_FontScale,
+                        k_TextBgColor,
+                        k_LineThickness,
+                        k_LineType,
+                        false       // when drawing in an image with bottom left origin, this should be true
+                    );
+
+                    cv::putText(
+                        g_webcam_image,
+                        tooth_count_half_str,
+                        centroid_i - cv::Point2i(text_size.width / 2, text_size.height / 2),
+                        k_FontFace,
+                        k_FontScale,
+                        k_TextColor,
+                        k_LineThickness,
+                        k_LineType,
+                        false       // when drawing in an image with bottom left origin, this should be true
+                    );
                 }
-
-                // identify clusters in distances
-                
-
-                /*
-                int min_x = 0;
-                int max_x = 0;
-                int min_y = 0;
-                int max_y = 0;
-
-                for (const auto& pt: largest_contour) {
-                    auto delta = centroid_i - pt;
-                    min_x = std::min(min_x, delta.x);
-                    min_y = std::min(min_y, delta.y);
-                    max_x = std::max(max_x, delta.x);
-                    max_y = std::max(max_y, delta.y);
-                }
-
-                int width  = max_x - min_x;
-                int height = max_y - min_y;
-
-                auto rect = cv::Rect(min_x + centroid_i.x, min_y + centroid_i.y, width, height);
-
-                // construct a 1-channel floating point buffer for the ROI
-                auto roi_8uc1 = g_foreground_mask(rect).clone();
-                cv::Mat roi_32fc1;
-
-                roi_8uc1.convertTo(roi_32fc1, CV_32FC1, 1.0 / 255.0); // normalized to [0..1] range
-                cv::imshow("roi", roi_32fc1);
-                */
             }
 
             // ----- rendering -----
@@ -520,7 +508,6 @@ int main(int, char* argv[]) {
             case 1: cv::imshow(main_window, g_hsv_image);    break;
             case 2: cv::imshow(main_window, g_hue_image);    break;
             case 3: cv::imshow(main_window, g_foreground);   break;
-            //case 4: cv::imshow(main_window, edges); break;
             }
 
             // ----- key input handling -----
