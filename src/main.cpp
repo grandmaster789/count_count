@@ -1,33 +1,24 @@
 #include <iostream>
 #include "platform/platform.h"
 #include "platform/build_date.h"
+#include "io/jpg.h"
 
 #include <opencv2/opencv.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio/registry.hpp>
-
-#define STB_IMAGE_IMPLEMENTATION
-#include <stb_image.h>
-#undef STB_IMAGE_IMPLEMENTATION
-
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include <stb_image_write.h>
-#undef STB_IMAGE_WRITE_IMPLEMENTATION
 
 #include <chrono>
 #include <format>
 #include <filesystem>
 #include <fstream>
 #include <numbers>
-#include <numeric>
 #include <algorithm>
 
 #if CVC_PLATFORM != CVC_PLATFORM_WINDOWS
     #error "Currently only Windows is supported"
 #endif
 
-cv::Mat g_source_image;      // BGR
-cv::Mat g_background;        // BGR
+cv::Mat g_source_image;      // BGR (only used with static input)
 cv::Mat g_foreground;        // BGR
 cv::Mat g_foreground_mask;   // grayscale
 cv::Mat g_webcam_image;      // BGR
@@ -37,75 +28,10 @@ cv::Mat g_hue_image;         // grayscale (hue)
 uint8_t g_selected_hue  = 0;
 int     g_hue_tolerance = 10;
 
-using StbResource = std::unique_ptr<stbi_uc, decltype(&stbi_image_free)>;
-
-cv::Mat load_jpg(const std::filesystem::path& p) {
-    int width, height, channels;
-
-    StbResource raw_data(
-        stbi_load(
-            p.string().c_str(),
-            &width,
-            &height,
-            &channels,
-            0
-        ),
-        &stbi_image_free
-    );
-
-    if (!raw_data) {
-        std::cout << "Failed to load jpg: " << p.string() << '\n';
-        std::cout << stbi_failure_reason();
-        return {};
-    }
-
-    switch (channels) {
-        case 1: return { height, width, CV_8UC1, raw_data.get() };
-        case 3: {
-            // assume data is in RGB -- openCV expects BGR so convert it
-            cv::Mat rgb(height, width, CV_8UC3, raw_data.get());
-            cv::Mat bgr;
-            cv::cvtColor(rgb, bgr, cv::COLOR_RGB2BGR);
-            return bgr;
-        }
-
-        case 4: return { height, width, CV_8UC4, raw_data.get() };
-
-    default:
-        return {};
-    }
-}
-
-void save_jpg(const cv::Mat& image, const std::filesystem::path& p) {
-    // openCV defaults to BGR images, while stb defaults to RGB... copy and convert
-
-    if (image.channels() == 3) {
-        cv::Mat rgb;
-
-        cv::cvtColor(image, rgb, cv::COLOR_BGR2RGB);
-
-        stbi_write_jpg(
-                p.string().c_str(),
-                rgb.cols,
-                rgb.rows,
-                rgb.channels(),
-                rgb.data,
-                90 // compression ratio
-        );
-    }
-    else {
-        stbi_write_jpg(
-                p.string().c_str(),
-                image.cols,
-                image.rows,
-                image.channels(),
-                image.data,
-                90 // compression ratio
-        );
-    }
-}
-
+//
 void save_image(const cv::Mat& img) {
+    using cc::io::save_jpg;
+
     if (img.empty()) {
         std::cout << "Cannot save empty image; skipping\n";
         return;
@@ -118,18 +44,6 @@ void save_image(const cv::Mat& img) {
 
     save_jpg(img, timestamped_filename);
     std::cout << "Saved " << timestamped_filename << '\n';
-}
-
-void save_background(const cv::Mat& img) {
-    if (img.empty()) {
-        std::cout << "Cannot save empty image as background; skipping\n";
-        return;
-    }
-
-    g_background = img.clone();
-
-    save_jpg(img, "background.jpg");
-    std::cout << "Saved background.jpg\n";
 }
 
 struct Resolution {
@@ -166,9 +80,6 @@ void save_settings() {
 }
 
 void load_settings(int camera_id = 0) {
-    // if a background image was saved, load it
-    g_background = load_jpg("background.jpg"); // if this fails, the background is an empty set
-
     // if a resolution was selected before, use that
     if (std::filesystem::exists("count_count.cfg")) {
         std::ifstream cfg("count_count.cfg");
@@ -270,6 +181,82 @@ HueRange determine_hue_range() {
     };
 }
 
+void initialize_image_buffers() {
+    if (g_hsv_image.empty())
+        g_hsv_image.create(g_webcam_image.size(), CV_8UC3);
+    if (g_hue_image.empty())
+        g_hue_image.create(g_webcam_image.size(), CV_8UC1);
+    if (g_foreground.empty())
+        g_foreground.create(g_webcam_image.size(), CV_8UC3);
+    if (g_foreground_mask.empty())
+        g_foreground_mask.create(g_webcam_image.size(), CV_8UC1);
+}
+
+void extract_hue_channel(
+    const cv::Mat& source,
+          cv::Mat& destination
+) {
+    // first convert to HSV
+    cv::cvtColor(source, g_hsv_image, cv::COLOR_BGR2HSV_FULL);
+
+    // extract just the hue, and put it in the destination
+    int channel_selection[] = {1, 0};
+    cv::mixChannels(&g_hsv_image, 1, &destination, 1, channel_selection, 1);
+}
+
+void determine_foreground() {
+    auto [min_hue, max_hue] = determine_hue_range();
+    cv::inRange(
+        g_hue_image,
+        cv::Scalar(min_hue),
+        cv::Scalar(max_hue),
+        g_foreground_mask
+    );
+
+    // apply slight blur to get rid of noise and small details
+    cv::medianBlur(g_foreground_mask, g_foreground_mask, 9);
+
+    g_foreground = cv::Mat::zeros(g_webcam_image.size(), CV_8UC3);
+    cv::copyTo(
+        g_webcam_image,
+        g_foreground,
+        g_foreground_mask
+    );
+}
+
+cv::Point_<int> find_centroid(
+    const std::vector<std::vector<cv::Point>>& contours,
+    int                                        largest_component_idx,
+    bool                                       do_visualization = false
+) {
+    // https://docs.opencv.org/3.4/d3/dc0/group__imgproc__shape.html#ga556a180f43cab22649c23ada36a8a139
+    auto moment = cv::moments(
+        contours[largest_component_idx],
+        false
+    );
+    auto centroid_d = cv::Point2d(
+        moment.m10 / moment.m00,
+        moment.m01 / moment.m00
+    );
+    auto centroid_i = cv::Point2i(
+        static_cast<int>(centroid_d.x),
+        static_cast<int>(centroid_d.y)
+    );
+
+    if (do_visualization)
+        cv::circle(
+            g_foreground,               // dst
+            centroid_d,                 // center
+            8,                          // radius
+            cv::Scalar(255, 255, 255),  // color
+            -1,                         // thickness (-1 for fill)
+            8,                          // line type
+            0                           // shift
+        );
+
+    return centroid_i;
+}
+
 int main(int, char* argv[]) {
     static const bool use_live_video = true;
 
@@ -303,8 +290,7 @@ int main(int, char* argv[]) {
             webcam.set(cv::CAP_PROP_FRAME_HEIGHT, g_webcam_resolution.height);
         }
         else {
-            // load via stb image
-            static_image = load_jpg((data_path / "test_gear_003.jpg"));
+            static_image = cc::io::load_jpg((data_path / "test_gear_003.jpg"));
         }
 
         cv::String main_window = "Webcam Video Stream";
@@ -331,40 +317,11 @@ int main(int, char* argv[]) {
             }
 
             // if the other images haven't been initialized yet, do so now
-            if (g_hsv_image.empty())
-                g_hsv_image.create(g_webcam_image.size(), CV_8UC3);
-            if (g_hue_image.empty())
-                g_hue_image.create(g_webcam_image.size(), CV_8UC1);
-            if (g_foreground.empty())
-                g_foreground.create(g_webcam_image.size(), CV_8UC3);
-            if (g_foreground_mask.empty())
-                g_foreground_mask.create(g_webcam_image.size(), CV_8UC1);
+            initialize_image_buffers();
 
             // ----- video processing -----
-            {
-                // background filtering doesn't work great during testing, probably need to compensate for automatic
-                // white balance as well
-                //cv::absdiff(g_webcam_image, g_background, g_foreground);
-            }
-
-            cv::cvtColor(g_webcam_image, g_hsv_image, cv::COLOR_BGR2HSV_FULL);
-            int channel_selection[] = {1, 0};
-            cv::mixChannels(&g_hsv_image, 1, &g_hue_image, 1, channel_selection, 1);
-
-            auto [min_hue, max_hue] = determine_hue_range();
-            cv::inRange(g_hue_image, cv::Scalar(min_hue), cv::Scalar(max_hue), g_foreground_mask);
-
-            {
-                // apply slight blur to get rid of noise and small details
-                cv::medianBlur(g_foreground_mask, g_foreground_mask, 9);
-            }
-
-            g_foreground = cv::Mat::zeros(g_webcam_image.size(), CV_8UC3);
-            cv::copyTo(
-                g_webcam_image,
-                g_foreground,
-                g_foreground_mask
-            );
+            extract_hue_channel(g_webcam_image, g_hue_image);
+            determine_foreground();
 
             std::vector<std::vector<cv::Point>> contours;
             std::vector<cv::Vec4i> hierarchy;
@@ -407,29 +364,10 @@ int main(int, char* argv[]) {
                 );
 
                 // find centroid of the contour
-
-                // https://docs.opencv.org/3.4/d3/dc0/group__imgproc__shape.html#ga556a180f43cab22649c23ada36a8a139
-                auto moment = cv::moments(
-                    contours[largest_component_idx],
-                    false
-                );
-                auto centroid_d = cv::Point2d(
-                    moment.m10 / moment.m00,
-                    moment.m01 / moment.m00
-                );
-                auto centroid_i = cv::Point2i(
-                    static_cast<int>(centroid_d.x),
-                    static_cast<int>(centroid_d.y)
-                );
-
-                cv::circle(
-                    g_foreground,               // dst
-                    centroid_d,                 // center
-                    8,                          // radius
-                    cv::Scalar(255, 255, 255),  // color
-                    -1,                         // thickness (-1 for fill)
-                    8,                          // line type
-                    0                           // shift
+                auto centroid_i = find_centroid(
+                    contours,
+                    largest_component_idx,
+                    true
                 );
 
                 const auto& largest_contour = contours[largest_component_idx];
@@ -437,7 +375,11 @@ int main(int, char* argv[]) {
                 // loop over the largest contour, collect 'similar' distances to the center point
                 std::vector<double> distances;
                 for (const auto& pt : largest_contour) {
-                    auto distance = std::hypot(pt.x - centroid_i.x, pt.y - centroid_i.y);
+                    auto distance = std::hypot(
+                        pt.x - centroid_i.x,
+                        pt.y - centroid_i.y
+                    );
+
                     distances.push_back(distance);
                 }
 
@@ -451,12 +393,17 @@ int main(int, char* argv[]) {
                     tooth_mask[i] = (distances[i] < distance_threshold) ? 1 : 0;
 
                 // figure out how often the threshold is crossed to determine a tooth count
+                // only count the 'rising' edges
                 int tooth_count = 0;
                 for (size_t i = 0; i < tooth_mask.size() - 1; ++i)
-                    tooth_count += (tooth_mask[i + 1] != tooth_mask[i]);
-                tooth_count += (tooth_mask.back() != tooth_mask.front());
+                    if (!tooth_mask[i] && tooth_mask[i + 1])
+                        ++tooth_count;
 
-                // this should be an even number; we've just counted both rising and lowering edges -- report half as the count
+                // fixup for the starting point
+                if (!tooth_mask.back() && tooth_mask.front())
+                    ++tooth_count;
+
+                // and display the result in-image at the center of the gear
                 {
                     constexpr int    k_FontFace      = cv::FONT_HERSHEY_SIMPLEX;
                     constexpr double k_FontScale     = 1.0;
@@ -466,7 +413,7 @@ int main(int, char* argv[]) {
                     constexpr int    k_LineThickness = 2;
                     constexpr int    k_LineType      = cv::LINE_AA;
 
-                    auto tooth_count_half_str = std::to_string(tooth_count / 2);
+                    auto tooth_count_half_str = std::to_string(tooth_count);
 
                     auto text_size = cv::getTextSize(
                         tooth_count_half_str,
@@ -527,11 +474,6 @@ int main(int, char* argv[]) {
                 case 'g':
                 case 'G':
                     save_image(g_webcam_image);
-                    break;
-
-                case 'b':
-                case 'B':
-                    save_background(g_webcam_image);
                     break;
 
                 case 32: // space bar
