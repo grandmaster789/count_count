@@ -18,15 +18,14 @@
     #error "Currently only Windows is supported"
 #endif
 
-cv::Mat g_source_image;      // BGR (only used with static input)
 cv::Mat g_foreground;        // BGR
 cv::Mat g_foreground_mask;   // grayscale
 cv::Mat g_webcam_image;      // BGR
-cv::Mat g_hsv_image;         // HSV
-cv::Mat g_hue_image;         // grayscale (hue)
 
-uint8_t g_selected_hue  = 0;
-int     g_hue_tolerance = 10;
+using RGB = std::array<uint8_t, 3>;
+
+RGB g_selected_rgb  = {};
+int g_rgb_tolerance = 10; // 0-255 range
 
 //
 void save_image(const cv::Mat& img) {
@@ -76,7 +75,11 @@ void save_settings() {
     std::ofstream cfg("count_count.cfg");
     cfg
             << g_webcam_resolution.width << ' ' << g_webcam_resolution.height << '\n'
-            << static_cast<int>(g_selected_hue) << ' ' << static_cast<int>(g_hue_tolerance) << '\n';
+            // bit of casting to keep it human-readable
+            << static_cast<int>(g_selected_rgb[0]) << ' '
+            << static_cast<int>(g_selected_rgb[1]) << ' '
+            << static_cast<int>(g_selected_rgb[2]) << ' '
+            << g_rgb_tolerance << '\n';
 }
 
 void load_settings(int camera_id = 0) {
@@ -85,15 +88,14 @@ void load_settings(int camera_id = 0) {
         std::ifstream cfg("count_count.cfg");
         int width         = 0;
         int height        = 0;
-        int selected_hue  = 0;
-        int hue_tolerance = 0;
 
         cfg >> width >> height
-            >> selected_hue >> hue_tolerance;
+            >> g_selected_rgb[0]
+            >> g_selected_rgb[1]
+            >> g_selected_rgb[2]
+            >> g_rgb_tolerance;
 
         g_webcam_resolution = { width, height };
-        g_selected_hue  = static_cast<uint8_t>(selected_hue);
-        g_hue_tolerance = hue_tolerance;
 
         return;
     }
@@ -131,12 +133,19 @@ std::filesystem::path find_data_folder(const std::filesystem::path& exe_path) {
     throw std::runtime_error("Failed to find data folder");
 }
 
+struct SensitivityBarHandler {
+    int m_ToleranceRange = 0;
+
+    void on_track_sensitivity_changed(int new_value) {
+        m_ToleranceRange = new_value;
+    }
+};
+
 static void track_sensitivity_changed(
     int   new_value,
-    void* /* userdata */
+    void* userdata
 ) {
-    g_hue_tolerance = static_cast<uint8_t>(new_value * 255 / 100);
-    std::cout << "Hue tolerance is " << static_cast<int>(g_hue_tolerance) << '\n';
+    static_cast<SensitivityBarHandler*>(userdata)->on_track_sensitivity_changed(new_value);
 }
 
 static void main_window_mouse_event(
@@ -150,8 +159,18 @@ static void main_window_mouse_event(
     switch (evt) {
     case cv::MouseEventTypes::EVENT_LBUTTONDOWN:
         std::cout << "Clicked at (" << x << ", " << y << ")\n";
-        g_selected_hue = g_hue_image.at<unsigned char>(y, x);
-        std::cout << "Hue is " << static_cast<int>(g_selected_hue) << '\n';
+        g_selected_rgb[0] = g_webcam_image.at<cv::Vec3b>(y, x)[0];
+        g_selected_rgb[1] = g_webcam_image.at<cv::Vec3b>(y, x)[1];
+        g_selected_rgb[2] = g_webcam_image.at<cv::Vec3b>(y, x)[2];
+
+        std::cout << "RGB is #"
+            << std::hex
+            << std::setw(2)
+            << std::setfill('0')
+            << static_cast<int>(g_selected_rgb[0])
+            << static_cast<int>(g_selected_rgb[1])
+            << static_cast<int>(g_selected_rgb[2])
+            << '\n';
         break;
 
     default:
@@ -159,57 +178,44 @@ static void main_window_mouse_event(
     };
 }
 
-struct HueRange {
-    uint8_t m_min_hue = 0;
-    uint8_t m_max_hue = 255;
+struct ColorRange {
+    RGB m_MinRGB = { 0x00, 0x00, 0x00 };
+    RGB m_MaxRGB = { 0xFF, 0xFF, 0xFF };
 };
 
-HueRange determine_hue_range() {
-    int hue = g_selected_hue;
-    int min_hue = hue - g_hue_tolerance / 2;
-    int max_hue = hue + g_hue_tolerance / 2;
+ColorRange determine_color_range(int tolerance_range) {
+    ColorRange result;
 
-    if (min_hue < 0)
-        min_hue = 0;
+    for (int i = 0; i < 3; ++i) {
+        int lower = g_selected_rgb[i] - (tolerance_range / 2);
+        int upper = g_selected_rgb[i] + (tolerance_range / 2);
 
-    if (max_hue > 255)
-        max_hue = 255;
+        if (lower < 0)
+            lower = 0;
 
-    return {
-        static_cast<uint8_t>(min_hue),
-        static_cast<uint8_t>(max_hue)
-    };
+        if (upper > 255)
+            upper = 255;
+
+        result.m_MinRGB[i] = static_cast<uint8_t>(lower);
+        result.m_MaxRGB[i] = static_cast<uint8_t>(upper);
+    }
+
+    return result;
 }
 
 void initialize_image_buffers() {
-    if (g_hsv_image.empty())
-        g_hsv_image.create(g_webcam_image.size(), CV_8UC3);
-    if (g_hue_image.empty())
-        g_hue_image.create(g_webcam_image.size(), CV_8UC1);
     if (g_foreground.empty())
         g_foreground.create(g_webcam_image.size(), CV_8UC3);
     if (g_foreground_mask.empty())
         g_foreground_mask.create(g_webcam_image.size(), CV_8UC1);
 }
 
-void extract_hue_channel(
-    const cv::Mat& source,
-          cv::Mat& destination
-) {
-    // first convert to HSV
-    cv::cvtColor(source, g_hsv_image, cv::COLOR_BGR2HSV_FULL);
-
-    // extract just the hue, and put it in the destination
-    int channel_selection[] = {1, 0};
-    cv::mixChannels(&g_hsv_image, 1, &destination, 1, channel_selection, 1);
-}
-
-void determine_foreground() {
-    auto [min_hue, max_hue] = determine_hue_range();
+void determine_foreground(int tolerance_range) {
+    auto [min_rgb, max_rgb] = determine_color_range(tolerance_range);
     cv::inRange(
-        g_hue_image,
-        cv::Scalar(min_hue),
-        cv::Scalar(max_hue),
+        g_webcam_image,
+        min_rgb,
+        max_rgb,
         g_foreground_mask
     );
 
@@ -258,7 +264,7 @@ cv::Point_<int> find_centroid(
 }
 
 int main(int, char* argv[]) {
-    static const bool use_live_video = true;
+    constexpr static const bool use_live_video = false;
 
     namespace fs = std::filesystem;
 
@@ -290,12 +296,15 @@ int main(int, char* argv[]) {
             webcam.set(cv::CAP_PROP_FRAME_HEIGHT, g_webcam_resolution.height);
         }
         else {
-            static_image = cc::io::load_jpg((data_path / "test_gear_003.jpg"));
+            static_image = cc::io::load_jpg((data_path / "test_broken_tooth_001.jpg"));
         }
 
+        SensitivityBarHandler trackbar_handler;
+
         cv::String main_window = "Webcam Video Stream";
-        cv::namedWindow(main_window, cv::WINDOW_KEEPRATIO | cv::WINDOW_AUTOSIZE); // create resizable window
-        cv::createTrackbar("Sensitivity", main_window, &g_hue_tolerance, 100, track_sensitivity_changed);
+        cv::namedWindow(main_window, cv::WINDOW_KEEPRATIO | cv::WINDOW_AUTOSIZE); // create a resizeable window
+        cv::createTrackbar("Sensitivity", main_window, nullptr, 255, track_sensitivity_changed, &trackbar_handler);
+        cv::setTrackbarPos("Sensitivity", main_window, g_rgb_tolerance);
         cv::setMouseCallback(main_window, main_window_mouse_event);
 
         int show = 0;
@@ -320,8 +329,7 @@ int main(int, char* argv[]) {
             initialize_image_buffers();
 
             // ----- video processing -----
-            extract_hue_channel(g_webcam_image, g_hue_image);
-            determine_foreground();
+            determine_foreground(trackbar_handler.m_ToleranceRange);
 
             std::vector<std::vector<cv::Point>> contours;
             std::vector<cv::Vec4i> hierarchy;
@@ -331,7 +339,7 @@ int main(int, char* argv[]) {
                 g_foreground_mask,
                 contours,
                 hierarchy,
-                cv::RETR_CCOMP, // organizes in multi-level list, with external boundaries at the top level
+                cv::RETR_CCOMP, // organizes in a multi-level list, with external boundaries at the top level
                 cv::CHAIN_APPROX_SIMPLE
             );
 
@@ -340,7 +348,7 @@ int main(int, char* argv[]) {
                 int    largest_component_idx = 0;
                 double max_area              = 0;
 
-                // loop through the top-level contours (the iteration sequence is described in the hierarchy vector,
+                // loop through the top-level contours (the iteration sequence is described in the hierarchy vector
                 // and terminates with a negative value) and find the biggest one.
                 for (; idx >= 0; idx = hierarchy[idx][0]) {
                     const auto& cont = contours[idx];
@@ -392,8 +400,8 @@ int main(int, char* argv[]) {
                 for (size_t i = 0; i < largest_contour.size(); ++i)
                     tooth_mask[i] = (distances[i] < distance_threshold) ? 1 : 0;
 
-                // figure out how often the threshold is crossed to determine a tooth count
-                // only count the 'rising' edges
+                // Here we figure out how often the threshold is crossed to determine a tooth count
+                // -- only count the 'rising' edges
                 int tooth_count = 0;
                 for (size_t i = 0; i < tooth_mask.size() - 1; ++i)
                     if (!tooth_mask[i] && tooth_mask[i + 1])
@@ -453,9 +461,7 @@ int main(int, char* argv[]) {
             // ----- rendering -----
             switch (show) {
             case 0: cv::imshow(main_window, g_webcam_image); break;
-            case 1: cv::imshow(main_window, g_hsv_image);    break;
-            case 2: cv::imshow(main_window, g_hue_image);    break;
-            case 3: cv::imshow(main_window, g_foreground);   break;
+            case 1: cv::imshow(main_window, g_foreground);   break;
             }
 
             // ----- key input handling -----
@@ -478,7 +484,7 @@ int main(int, char* argv[]) {
 
                 case 32: // space bar
                     //cycle through shown images
-                    if (++show > 4)
+                    if (++show > 1)
                         show = 0;
                     break;
 
