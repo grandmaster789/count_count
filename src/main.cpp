@@ -13,6 +13,8 @@
 #include <fstream>
 #include <numbers>
 #include <algorithm>
+#include <numeric>
+#include <numbers>
 
 #if CVC_PLATFORM != CVC_PLATFORM_WINDOWS
     #error "Currently only Windows is supported"
@@ -26,6 +28,25 @@ using RGB = std::array<uint8_t, 3>;
 
 RGB g_selected_rgb  = {};
 int g_rgb_tolerance = 10; // 0-255 range
+
+template <typename T>
+T square(const T& value) {
+    return value * value;
+}
+
+enum ToothAnomaly: uint16_t {
+    none                 = 0,
+    strong_size          = 1 << 0,
+    strong_min_distance  = 1 << 1,
+    strong_max_distance  = 1 << 2,
+    strong_arc           = 1 << 3,
+    strong_gap           = 1 << 4,
+    weak_size            = 1 << 5,
+    weak_min_distance    = 1 << 6,
+    weak_max_distance    = 1 << 7,
+    weak_arc             = 1 << 8,
+    weak_gap             = 1 << 9
+};
 
 //
 void save_image(const cv::Mat& img) {
@@ -230,7 +251,7 @@ void determine_foreground(int tolerance_range) {
     );
 }
 
-cv::Point_<int> find_centroid(
+cv::Point_<double> find_centroid(
     const std::vector<std::vector<cv::Point>>& contours,
     int                                        largest_component_idx,
     bool                                       do_visualization = false
@@ -244,10 +265,6 @@ cv::Point_<int> find_centroid(
         moment.m10 / moment.m00,
         moment.m01 / moment.m00
     );
-    auto centroid_i = cv::Point2i(
-        static_cast<int>(centroid_d.x),
-        static_cast<int>(centroid_d.y)
-    );
 
     if (do_visualization)
         cv::circle(
@@ -260,7 +277,17 @@ cv::Point_<int> find_centroid(
             0                           // shift
         );
 
-    return centroid_i;
+    return centroid_d;
+}
+
+double arc_length(
+    double starting_radians,
+    double ending_radians
+) {
+    while (starting_radians > ending_radians)
+        ending_radians += 2.0 * std::numbers::pi;
+
+    return ending_radians - starting_radians;
 }
 
 int main(int, char* argv[]) {
@@ -372,10 +399,20 @@ int main(int, char* argv[]) {
                 );
 
                 // find centroid of the contour
-                auto centroid_i = find_centroid(
+                auto centroid_d = find_centroid(
                     contours,
                     largest_component_idx,
                     true
+                );
+
+                auto centroid_f = cv::Point2f(
+                    static_cast<float>(centroid_d.x),
+                    static_cast<float>(centroid_d.y)
+                );
+
+                auto centroid_i = cv::Point2i(
+                    static_cast<int>(centroid_d.x),
+                    static_cast<int>(centroid_d.y)
                 );
 
                 const auto& largest_contour = contours[largest_component_idx];
@@ -401,15 +438,203 @@ int main(int, char* argv[]) {
                     tooth_mask[i] = (distances[i] < distance_threshold) ? 1 : 0;
 
                 // Here we figure out how often the threshold is crossed to determine a tooth count
-                // -- only count the 'rising' edges
+                // -- only count the 'rising' edges to establish a count
+                // -- also figure out some tooth measurements
                 int tooth_count = 0;
-                for (size_t i = 0; i < tooth_mask.size() - 1; ++i)
-                    if (!tooth_mask[i] && tooth_mask[i + 1])
+
+                struct ToothMeasurement {
+                    double m_MinDistance =  std::numeric_limits<double>::max();
+                    double m_MaxDistance = -std::numeric_limits<double>::max();;
+                    double m_StartingAngle;
+                    double m_EndingAngle;
+
+                    size_t m_StartMaskIdx;
+                    size_t m_EndMaskIdx;
+
+                    size_t m_ToothIdx;
+                };
+
+                std::vector<ToothMeasurement> tooth_measurements;
+
+                // find the first (low) position where the mask changes from low to high
+                auto find_tooth_start = [](const auto& mask) -> std::optional<size_t> {
+                    if (mask.empty())
+                        return std::nullopt;
+
+                    for (size_t i = 0; i < mask.size(); ++i)
+                        if (!mask[i] && mask[i + 1])
+                            return i;
+
+                    // super edge case where there is just one change and it's right at the end of the list
+                    if (!mask.back() && mask.front())
+                        return mask.size() - 1;
+
+                    return std::nullopt;
+                };
+
+                auto first_tooth = find_tooth_start(tooth_mask);
+                if (!first_tooth)
+                    continue;
+
+                size_t starting_idx = *first_tooth;
+
+                // from the first position, iterate over the entire set and collect measurements during traversal
+                for (size_t i = starting_idx; i < starting_idx + tooth_mask.size(); ++i) {
+                    uint8_t current_mask_value = tooth_mask[i % tooth_mask.size()];
+                    uint8_t next_mask_value    = tooth_mask[(i + 1) % tooth_mask.size()];
+
+                    // count rising edges as the start of a tooth
+                    // the algorithm starts at a position where this is the case
+                    if (!current_mask_value && next_mask_value) {
                         ++tooth_count;
 
-                // fixup for the starting point
-                if (!tooth_mask.back() && tooth_mask.front())
-                    ++tooth_count;
+                        ToothMeasurement new_measurement;
+                        new_measurement.m_StartMaskIdx  = i % tooth_mask.size();
+                        new_measurement.m_ToothIdx      = tooth_count;
+                        new_measurement.m_StartingAngle = std::atan2f(
+                            largest_contour[new_measurement.m_StartMaskIdx].y - centroid_f.y,
+                            largest_contour[new_measurement.m_StartMaskIdx].x - centroid_f.x
+                        );
+
+                        tooth_measurements.push_back(std::move(new_measurement));
+                    }
+
+                    if (current_mask_value && !next_mask_value) {
+                        // complete measurements from the last measurement
+                        auto& measurement = tooth_measurements.back();
+
+                        measurement.m_EndMaskIdx = i % tooth_mask.size();
+                        measurement.m_EndingAngle = std::atan2f(
+                            largest_contour[measurement.m_EndMaskIdx].y - centroid_f.y,
+                            largest_contour[measurement.m_EndMaskIdx].x - centroid_f.x
+                        );
+
+                        auto min_max_distances = std::minmax_element(
+                            distances.begin() + measurement.m_StartMaskIdx,
+                            distances.begin() + measurement.m_EndMaskIdx
+                        );
+
+                        measurement.m_MinDistance = *min_max_distances.first;
+                        measurement.m_MaxDistance = *min_max_distances.second;
+                    }
+                }
+
+                {
+                    // apply some statistics:
+                    // - find the mean tooth size, min distance and max distance
+                    // - find the mean distance to the next tooth
+                    // - establish variance for both tooth size and distances (unbiased sample variance)
+                    // - whenever the measurement exceeds the variance plus tolerance, present a signal
+
+                    std::vector<double> tooth_sizes;
+                    std::vector<double> tooth_min_distances;
+                    std::vector<double> tooth_max_distances;
+                    std::vector<double> tooth_arcs;
+                    std::vector<double> tooth_arc_gaps_to_next;
+
+                    for (const auto& measurement: tooth_measurements) {
+                        tooth_sizes.push_back(measurement.m_MaxDistance - measurement.m_MinDistance);
+
+                        tooth_min_distances.push_back(measurement.m_MinDistance);
+                        tooth_max_distances.push_back(measurement.m_MaxDistance);
+
+                        tooth_arcs.push_back(
+                            arc_length(measurement.m_StartingAngle, measurement.m_EndingAngle)
+                        );
+                    }
+
+                    for (size_t i = 0; i < tooth_measurements.size(); ++i) {
+                        const auto& current = tooth_measurements[i];
+                        const auto& next    = tooth_measurements[(i + 1) % tooth_measurements.size()];;
+
+                        tooth_arc_gaps_to_next.push_back(
+                            arc_length(current.m_EndingAngle, next.m_StartingAngle)
+                        );
+                    }
+
+                    auto calculate_mean = [](const std::vector<double>& values) {
+                        return std::accumulate(
+                            std::begin(values),
+                            std::end(values),
+                            0.0
+                        ) / values.size();
+                    };
+
+                    auto calculate_variance = [](const std::vector<double>& values, double mean) {
+                        return std::accumulate(
+                            std::begin(values),
+                            std::end(values),
+                            0.0,
+                            [mean](double acc, const auto& value) {
+                                return acc + square(value - mean);
+                            }
+                        ) / values.size();;
+                    };
+
+                    const double tooth_size_mean     = calculate_mean(tooth_sizes);
+                    const double tooth_size_variance = calculate_variance(tooth_sizes, tooth_size_mean);
+                    const double tooth_size_stddev   = std::sqrt(tooth_size_variance);
+
+                    const double tooth_min_distance_mean = calculate_mean(tooth_min_distances);
+                    const double tooth_min_variance      = calculate_variance(tooth_min_distances, tooth_min_distance_mean);
+                    const double tooth_min_stddev        = std::sqrt(tooth_min_variance);
+
+                    const double tooth_max_distance_mean = calculate_mean(tooth_max_distances);
+                    const double tooth_max_variance      = calculate_variance(tooth_max_distances, tooth_max_distance_mean);
+                    const double tooth_max_stddev        = std::sqrt(tooth_max_variance);
+
+                    const double tooth_arc_mean     = calculate_mean(tooth_arcs);
+                    const double tooth_arc_variance = calculate_variance(tooth_arcs, tooth_arc_mean);
+                    const double tooth_arc_stddev   = std::sqrt(tooth_arc_variance);
+
+                    const double tooth_gap_mean     = calculate_mean(tooth_arc_gaps_to_next);
+                    const double tooth_gap_variance = calculate_variance(tooth_arc_gaps_to_next, tooth_gap_mean);
+                    const double tooth_gap_stddev   = std::sqrt(tooth_gap_variance);
+
+
+                    // strong anomalies are more than twice the stddev from the mean,
+                    // weak anomalies between once and twice the stddev
+                    // regular observations are less than the stddev
+                    //
+                    // let's focus on finding strong anomalies first
+
+                    const double tooth_size_anomaly_strong = 2.0 * tooth_size_stddev;
+                    const double tooth_min_anomaly_strong  = 2.0 * tooth_min_stddev;
+                    const double tooth_max_anomaly_strong  = 2.0 * tooth_max_stddev;
+                    const double tooth_arc_anomaly_strong  = 2.0 * tooth_arc_stddev;
+                    const double tooth_gap_anomaly_strong  = 2.0 * tooth_gap_stddev;
+
+                    std::vector<uint16_t> tooth_anomaly_mask(tooth_measurements.size(), ToothAnomaly::none);
+
+                    for (size_t i = 0; i < tooth_measurements.size(); ++i) {
+                        double tooth_size         = tooth_sizes[i];
+                        double tooth_min_distance = tooth_min_distances[i];
+                        double tooth_max_distance = tooth_max_distances[i];
+                        double tooth_arc          = tooth_arcs[i];
+                        double tooth_gap          = tooth_arc_gaps_to_next[i];
+
+                        double tooth_size_anomaly = std::abs(tooth_size         - tooth_size_mean);
+                        double tooth_min_anomaly  = std::abs(tooth_min_distance - tooth_min_distance_mean);
+                        double tooth_max_anomaly  = std::abs(tooth_max_distance - tooth_max_distance_mean);
+                        double tooth_arc_anomaly  = std::abs(tooth_arc          - tooth_arc_mean);
+                        double tooth_gap_anomaly  = std::abs(tooth_gap          - tooth_gap_mean);
+
+                        if (tooth_size_anomaly > tooth_size_anomaly_strong)
+                            tooth_anomaly_mask[i] |= ToothAnomaly::strong_size;
+
+                        if (tooth_min_anomaly > tooth_min_anomaly_strong)
+                            tooth_anomaly_mask[i] |= ToothAnomaly::strong_min_distance;
+
+                        if (tooth_max_anomaly > tooth_max_anomaly_strong)
+                            tooth_anomaly_mask[i] |= ToothAnomaly::strong_max_distance;
+
+                        if (tooth_arc_anomaly > tooth_arc_anomaly_strong)
+                            tooth_anomaly_mask[i] |= ToothAnomaly::strong_arc;
+
+                        if (tooth_gap_anomaly > tooth_gap_anomaly_strong)
+                            tooth_anomaly_mask[i] |= ToothAnomaly::strong_gap;
+                    }
+                }
 
                 // and display the result in-image at the center of the gear
                 {
