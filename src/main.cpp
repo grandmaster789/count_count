@@ -29,7 +29,7 @@ using RGB = std::array<uint8_t, 3>;
 RGB g_selected_rgb  = {};
 int g_rgb_tolerance = 10; // 0-255 range
 
-
+static constexpr const size_t k_MinimumToothCount = 8;
 
 template <typename T>
 T square(const T& value) {
@@ -324,7 +324,7 @@ int main(int, char* argv[]) {
             webcam.set(cv::CAP_PROP_FRAME_HEIGHT, g_webcam_resolution.height);
         }
         else {
-            static_image = cc::io::load_jpg((data_path / "test_broken_tooth_001.jpg"));
+            static_image = cc::io::load_jpg((data_path / "test_broken_tooth_002.jpg"));
         }
 
         SensitivityBarHandler trackbar_handler;
@@ -463,10 +463,10 @@ int main(int, char* argv[]) {
                         return std::nullopt;
 
                     for (size_t i = 0; i < mask.size(); ++i)
-                        if (!mask[i] && mask[i + 1])
+                        if (!mask[i] && mask[(i + 1) % mask.size()])
                             return i;
 
-                    // super edge case where there is just one change and it's right at the end of the list
+                    // super edge case where there is just one change, and it's right at the end of the list
                     if (!mask.back() && mask.front())
                         return mask.size() - 1;
 
@@ -524,174 +524,177 @@ int main(int, char* argv[]) {
                     }
                 }
 
-                reset_anomaly_mask(teeth.size());
+                // early exit -- if we have found less than 8 teeth, it's probably not a gear that we found
+                if (tooth_count >= k_MinimumToothCount) {
+                    reset_anomaly_mask(teeth.size());
 
-                {
-                    // apply some statistics:
-                    // - find the mean distance to the next tooth
-                    // - establish variance for both tooth arcs and gaps (unbiased sample variance)
-                    // - whenever the measurement exceeds the variance plus tolerance, present a signal
-                    std::vector<double> tooth_arc_gaps_to_next;
-                    std::vector<double> tooth_arcs;
+                    {
+                        // apply some statistics:
+                        // - find the mean distance to the next tooth
+                        // - establish variance for both tooth arcs and gaps (unbiased sample variance)
+                        // - whenever the measurement exceeds the variance plus tolerance, present a signal
+                        std::vector<double> tooth_arc_gaps_to_next;
+                        std::vector<double> tooth_arcs;
 
-                    for (size_t i = 0; i < teeth.size(); ++i) {
-                        const auto& current = teeth[i];
-                        const auto& next    = teeth[(i + 1) % teeth.size()];;
+                        for (size_t i = 0; i < teeth.size(); ++i) {
+                            const auto &current = teeth[i];
+                            const auto &next = teeth[(i + 1) % teeth.size()];;
 
-                        tooth_arcs.push_back(
-                            arc_length(current.m_StartingAngle, current.m_EndingAngle)
-                        );
+                            tooth_arcs.push_back(
+                                arc_length(current.m_StartingAngle, current.m_EndingAngle)
+                            );
 
-                        tooth_arc_gaps_to_next.push_back(
-                            arc_length(current.m_EndingAngle, next.m_StartingAngle)
-                        );
-                    }
-
-                    auto calculate_mean = [](const std::vector<double>& values) {
-                        return std::accumulate(
-                            std::begin(values),
-                            std::end(values),
-                            0.0
-                        ) / values.size();
-                    };
-
-                    auto calculate_variance = [](const std::vector<double>& values, double mean) {
-                        return std::accumulate(
-                            std::begin(values),
-                            std::end(values),
-                            0.0,
-                            [mean](double acc, const auto& value) {
-                                return acc + square(value - mean);
-                            }
-                        ) / values.size();;
-                    };
-
-                    const double tooth_arc_mean     = calculate_mean(tooth_arcs);
-                    const double tooth_arc_variance = calculate_variance(tooth_arcs, tooth_arc_mean);
-                    const double tooth_arc_stddev   = std::sqrt(tooth_arc_variance);
-
-                    const double tooth_gap_mean     = calculate_mean(tooth_arc_gaps_to_next);
-                    const double tooth_gap_variance = calculate_variance(tooth_arc_gaps_to_next, tooth_gap_mean);
-                    const double tooth_gap_stddev   = std::sqrt(tooth_gap_variance);
-
-                    // strong anomalies are more than twice the stddev from the mean,
-                    // weak anomalies between once and twice the stddev
-                    // regular observations are less than the stddev
-                    //
-                    // let's focus on finding strong anomalies first
-                    const double tooth_gap_anomaly_strong  = 2.0 * tooth_gap_stddev;
-                    const double tooth_arc_anomaly_strong  = 2.0 * tooth_arc_stddev;
-
-                    for (size_t i = 0; i < teeth.size(); ++i) {
-                        double tooth_gap = tooth_arc_gaps_to_next[i];
-                        double tooth_arc = tooth_arcs[i];
-
-                        double tooth_arc_anomaly = std::abs(tooth_arc - tooth_arc_mean);
-                        double tooth_gap_anomaly = std::abs(tooth_gap - tooth_gap_mean);
-
-                        if (tooth_gap_anomaly > tooth_gap_anomaly_strong)
-                            g_tooth_anomaly_mask[i] |= ToothAnomaly::gap;
-
-                        if (tooth_arc_anomaly > tooth_arc_anomaly_strong)
-                            g_tooth_anomaly_mask[i] |= ToothAnomaly::arc;
-                    }
-                }
-
-                // visualize anomalies using a simple line from the center towards the tooth
-                {
-                    auto draw_arrow = [](
-                        const cv::Point2d& gear_center,
-                        double             gear_radius,
-                        double             angle,
-                        const cv::Scalar&  color     = cv::Scalar(255, 255, 127),
-                        int                thickness = 3
-                    ) {
-                        // determine intersection from the center with the circle at radius
-                        cv::Point2d to(
-                            gear_center.x + 0.95 * gear_radius * std::cos(angle),
-                            gear_center.y + 0.95 * gear_radius * std::sin(angle)
-                        );
-
-                        cv::Point2d from(
-                            gear_center.x + 0.5 * gear_radius * std::cos(angle),
-                            gear_center.y + 0.5 * gear_radius * std::sin(angle)
-                        );
-
-                        cv::Point2d left(
-                            gear_center.x + 0.9 * gear_radius * std::cos(angle - std::numbers::pi / 40.0),
-                            gear_center.y + 0.9 * gear_radius * std::sin(angle - std::numbers::pi / 40.0)
-                        );
-
-                        cv::Point2d right(
-                            gear_center.x + 0.9 * gear_radius * std::cos(angle + std::numbers::pi / 40.0),
-                            gear_center.y + 0.9 * gear_radius * std::sin(angle + std::numbers::pi / 40.0)
-                        );
-
-                        cv::line(g_webcam_image, from,  to, color, thickness);
-                        cv::line(g_webcam_image, left,  to, color, thickness);
-                        cv::line(g_webcam_image, right, to, color, thickness);
-                    };
-
-                    for (size_t i = 0; i < teeth.size(); ++i) {
-                        const auto& measurement       = teeth[i];
-                        //const auto& next_measurement  = teeth[(i + 1) % teeth.size()];;
-                        const auto& anomaly_detection = g_tooth_anomaly_mask[i];
-
-                        if (anomaly_detection & ToothAnomaly::arc) {
-                            draw_arrow(
-                                centroid_d,
-                                measurement.m_MinDistance,
-                                (measurement.m_EndingAngle + measurement.m_StartingAngle) / 2.0,
-                                cv::Scalar(255, 255, 127)
+                            tooth_arc_gaps_to_next.push_back(
+                                arc_length(current.m_EndingAngle, next.m_StartingAngle)
                             );
                         }
+
+                        auto calculate_mean = [](const std::vector<double> &values) {
+                            return std::accumulate(
+                                std::begin(values),
+                                std::end(values),
+                                0.0
+                            ) / values.size();
+                        };
+
+                        auto calculate_variance = [](const std::vector<double> &values, double mean) {
+                            return std::accumulate(
+                                std::begin(values),
+                                std::end(values),
+                                0.0,
+                                [mean](double acc, const auto &value) {
+                                    return acc + square(value - mean);
+                                }
+                            ) / values.size();;
+                        };
+
+                        const double tooth_arc_mean = calculate_mean(tooth_arcs);
+                        const double tooth_arc_variance = calculate_variance(tooth_arcs, tooth_arc_mean);
+                        const double tooth_arc_stddev = std::sqrt(tooth_arc_variance);
+
+                        const double tooth_gap_mean = calculate_mean(tooth_arc_gaps_to_next);
+                        const double tooth_gap_variance = calculate_variance(tooth_arc_gaps_to_next, tooth_gap_mean);
+                        const double tooth_gap_stddev = std::sqrt(tooth_gap_variance);
+
+                        // strong anomalies several times the distance of the stddev from the mean,
+                        // weak anomalies between stddev and strong anomaly threshold
+                        // regular observations are less than the stddev
+                        //
+                        // let's focus on finding strong anomalies first
+                        const double tooth_gap_anomaly_strong = 3.0 * tooth_gap_stddev;
+                        const double tooth_arc_anomaly_strong = 3.0 * tooth_arc_stddev;
+
+                        for (size_t i = 0; i < teeth.size(); ++i) {
+                            double tooth_gap = tooth_arc_gaps_to_next[i];
+                            double tooth_arc = tooth_arcs[i];
+
+                            double tooth_arc_anomaly = std::abs(tooth_arc - tooth_arc_mean);
+                            double tooth_gap_anomaly = std::abs(tooth_gap - tooth_gap_mean);
+
+                            if (tooth_gap_anomaly > tooth_gap_anomaly_strong)
+                                g_tooth_anomaly_mask[i] |= ToothAnomaly::gap;
+
+                            if (tooth_arc_anomaly > tooth_arc_anomaly_strong)
+                                g_tooth_anomaly_mask[i] |= ToothAnomaly::arc;
+                        }
                     }
-                }
 
-                // and display the result in-image at the center of the gear
-                {
-                    constexpr int    k_FontFace      = cv::FONT_HERSHEY_SIMPLEX;
-                    constexpr double k_FontScale     = 1.0;
-                    constexpr int    k_FontThickness = 3;
-                    const cv::Scalar k_TextColor     = cv::Scalar(255, 255, 255);
-                    const cv::Scalar k_TextBgColor   = cv::Scalar(0, 0, 0);
-                    constexpr int    k_LineThickness = 2;
-                    constexpr int    k_LineType      = cv::LINE_AA;
+                    // visualize anomalies using a simple line from the center towards the tooth
+                    {
+                        auto draw_arrow = [](
+                            const cv::Point2d &gear_center,
+                            double gear_radius,
+                            double angle,
+                            const cv::Scalar &color = cv::Scalar(255, 255, 127),
+                            int thickness = 3
+                        ) {
+                            // determine intersection from the center with the circle at radius
+                            cv::Point2d to(
+                                gear_center.x + 0.95 * gear_radius * std::cos(angle),
+                                gear_center.y + 0.95 * gear_radius * std::sin(angle)
+                            );
 
-                    auto tooth_count_half_str = std::to_string(tooth_count);
+                            cv::Point2d from(
+                                gear_center.x + 0.5 * gear_radius * std::cos(angle),
+                                gear_center.y + 0.5 * gear_radius * std::sin(angle)
+                            );
 
-                    auto text_size = cv::getTextSize(
-                        tooth_count_half_str,
-                        k_FontFace,
-                        k_FontScale,
-                        k_FontThickness,
-                        nullptr
-                    );
+                            cv::Point2d left(
+                                gear_center.x + 0.9 * gear_radius * std::cos(angle - std::numbers::pi / 40.0),
+                                gear_center.y + 0.9 * gear_radius * std::sin(angle - std::numbers::pi / 40.0)
+                            );
 
-                    // simple shadow
-                    cv::putText(
-                        g_webcam_image,
-                        tooth_count_half_str,
-                        centroid_i - cv::Point2i(text_size.width / 2, text_size.height / 2) + cv::Point2i(2, 2),
-                        k_FontFace,
-                        k_FontScale,
-                        k_TextBgColor,
-                        k_LineThickness,
-                        k_LineType,
-                        false       // when drawing in an image with bottom left origin, this should be true
-                    );
+                            cv::Point2d right(
+                                gear_center.x + 0.9 * gear_radius * std::cos(angle + std::numbers::pi / 40.0),
+                                gear_center.y + 0.9 * gear_radius * std::sin(angle + std::numbers::pi / 40.0)
+                            );
 
-                    cv::putText(
-                        g_webcam_image,
-                        tooth_count_half_str,
-                        centroid_i - cv::Point2i(text_size.width / 2, text_size.height / 2),
-                        k_FontFace,
-                        k_FontScale,
-                        k_TextColor,
-                        k_LineThickness,
-                        k_LineType,
-                        false       // when drawing in an image with bottom left origin, this should be true
-                    );
+                            cv::line(g_webcam_image, from, to, color, thickness);
+                            cv::line(g_webcam_image, left, to, color, thickness);
+                            cv::line(g_webcam_image, right, to, color, thickness);
+                        };
+
+                        for (size_t i = 0; i < teeth.size(); ++i) {
+                            const auto &measurement = teeth[i];
+                            //const auto& next_measurement  = teeth[(i + 1) % teeth.size()];;
+                            const auto &anomaly_detection = g_tooth_anomaly_mask[i];
+
+                            if (anomaly_detection & ToothAnomaly::arc) {
+                                draw_arrow(
+                                    centroid_d,
+                                    measurement.m_MinDistance,
+                                    (measurement.m_EndingAngle + measurement.m_StartingAngle) / 2.0,
+                                    cv::Scalar(255, 255, 127)
+                                );
+                            }
+                        }
+                    }
+
+                    // and display the result in-image at the center of the gear
+                    {
+                        constexpr int k_FontFace = cv::FONT_HERSHEY_SIMPLEX;
+                        constexpr double k_FontScale = 1.0;
+                        constexpr int k_FontThickness = 3;
+                        const cv::Scalar k_TextColor = cv::Scalar(255, 255, 255);
+                        const cv::Scalar k_TextBgColor = cv::Scalar(0, 0, 0);
+                        constexpr int k_LineThickness = 2;
+                        constexpr int k_LineType = cv::LINE_AA;
+
+                        auto tooth_count_half_str = std::to_string(tooth_count);
+
+                        auto text_size = cv::getTextSize(
+                            tooth_count_half_str,
+                            k_FontFace,
+                            k_FontScale,
+                            k_FontThickness,
+                            nullptr
+                        );
+
+                        // simple shadow
+                        cv::putText(
+                            g_webcam_image,
+                            tooth_count_half_str,
+                            centroid_i - cv::Point2i(text_size.width / 2, text_size.height / 2) + cv::Point2i(2, 2),
+                            k_FontFace,
+                            k_FontScale,
+                            k_TextBgColor,
+                            k_LineThickness,
+                            k_LineType,
+                            false       // when drawing in an image with bottom left origin, this should be true
+                        );
+
+                        cv::putText(
+                            g_webcam_image,
+                            tooth_count_half_str,
+                            centroid_i - cv::Point2i(text_size.width / 2, text_size.height / 2),
+                            k_FontFace,
+                            k_FontScale,
+                            k_TextColor,
+                            k_LineThickness,
+                            k_LineType,
+                            false       // when drawing in an image with bottom left origin, this should be true
+                        );
+                    }
                 }
             }
 
