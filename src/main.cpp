@@ -34,18 +34,10 @@ T square(const T& value) {
     return value * value;
 }
 
-enum ToothAnomaly: uint16_t {
-    none                 = 0,
-    strong_size          = 1 << 0,
-    strong_min_distance  = 1 << 1,
-    strong_max_distance  = 1 << 2,
-    strong_arc           = 1 << 3,
-    strong_gap           = 1 << 4,
-    weak_size            = 1 << 5,
-    weak_min_distance    = 1 << 6,
-    weak_max_distance    = 1 << 7,
-    weak_arc             = 1 << 8,
-    weak_gap             = 1 << 9
+enum ToothAnomaly: uint8_t {
+    none = 0x0,
+    arc  = 0x1 << 1,
+    gap  = 0x1 << 2
 };
 
 //
@@ -521,31 +513,19 @@ int main(int, char* argv[]) {
 
                 {
                     // apply some statistics:
-                    // - find the mean tooth size, min distance and max distance
                     // - find the mean distance to the next tooth
-                    // - establish variance for both tooth size and distances (unbiased sample variance)
+                    // - establish variance for both tooth arcs and gaps (unbiased sample variance)
                     // - whenever the measurement exceeds the variance plus tolerance, present a signal
-
-                    std::vector<double> tooth_sizes;
-                    std::vector<double> tooth_min_distances;
-                    std::vector<double> tooth_max_distances;
                     std::vector<double> tooth_arcs;
                     std::vector<double> tooth_arc_gaps_to_next;
-
-                    for (const auto& measurement: tooth_measurements) {
-                        tooth_sizes.push_back(measurement.m_MaxDistance - measurement.m_MinDistance);
-
-                        tooth_min_distances.push_back(measurement.m_MinDistance);
-                        tooth_max_distances.push_back(measurement.m_MaxDistance);
-
-                        tooth_arcs.push_back(
-                            arc_length(measurement.m_StartingAngle, measurement.m_EndingAngle)
-                        );
-                    }
 
                     for (size_t i = 0; i < tooth_measurements.size(); ++i) {
                         const auto& current = tooth_measurements[i];
                         const auto& next    = tooth_measurements[(i + 1) % tooth_measurements.size()];;
+
+                        tooth_arcs.push_back(
+                            arc_length(current.m_StartingAngle, current.m_EndingAngle)
+                        );
 
                         tooth_arc_gaps_to_next.push_back(
                             arc_length(current.m_EndingAngle, next.m_StartingAngle)
@@ -571,18 +551,6 @@ int main(int, char* argv[]) {
                         ) / values.size();;
                     };
 
-                    const double tooth_size_mean     = calculate_mean(tooth_sizes);
-                    const double tooth_size_variance = calculate_variance(tooth_sizes, tooth_size_mean);
-                    const double tooth_size_stddev   = std::sqrt(tooth_size_variance);
-
-                    const double tooth_min_distance_mean = calculate_mean(tooth_min_distances);
-                    const double tooth_min_variance      = calculate_variance(tooth_min_distances, tooth_min_distance_mean);
-                    const double tooth_min_stddev        = std::sqrt(tooth_min_variance);
-
-                    const double tooth_max_distance_mean = calculate_mean(tooth_max_distances);
-                    const double tooth_max_variance      = calculate_variance(tooth_max_distances, tooth_max_distance_mean);
-                    const double tooth_max_stddev        = std::sqrt(tooth_max_variance);
-
                     const double tooth_arc_mean     = calculate_mean(tooth_arcs);
                     const double tooth_arc_variance = calculate_variance(tooth_arcs, tooth_arc_mean);
                     const double tooth_arc_stddev   = std::sqrt(tooth_arc_variance);
@@ -597,42 +565,23 @@ int main(int, char* argv[]) {
                     // regular observations are less than the stddev
                     //
                     // let's focus on finding strong anomalies first
-
-                    const double tooth_size_anomaly_strong = 2.0 * tooth_size_stddev;
-                    const double tooth_min_anomaly_strong  = 2.0 * tooth_min_stddev;
-                    const double tooth_max_anomaly_strong  = 2.0 * tooth_max_stddev;
                     const double tooth_arc_anomaly_strong  = 2.0 * tooth_arc_stddev;
                     const double tooth_gap_anomaly_strong  = 2.0 * tooth_gap_stddev;
 
-                    std::vector<uint16_t> tooth_anomaly_mask(tooth_measurements.size(), ToothAnomaly::none);
+                    std::vector<uint8_t> tooth_anomaly_mask(tooth_measurements.size(), ToothAnomaly::none);
 
                     for (size_t i = 0; i < tooth_measurements.size(); ++i) {
-                        double tooth_size         = tooth_sizes[i];
-                        double tooth_min_distance = tooth_min_distances[i];
-                        double tooth_max_distance = tooth_max_distances[i];
                         double tooth_arc          = tooth_arcs[i];
                         double tooth_gap          = tooth_arc_gaps_to_next[i];
 
-                        double tooth_size_anomaly = std::abs(tooth_size         - tooth_size_mean);
-                        double tooth_min_anomaly  = std::abs(tooth_min_distance - tooth_min_distance_mean);
-                        double tooth_max_anomaly  = std::abs(tooth_max_distance - tooth_max_distance_mean);
                         double tooth_arc_anomaly  = std::abs(tooth_arc          - tooth_arc_mean);
                         double tooth_gap_anomaly  = std::abs(tooth_gap          - tooth_gap_mean);
 
-                        if (tooth_size_anomaly > tooth_size_anomaly_strong)
-                            tooth_anomaly_mask[i] |= ToothAnomaly::strong_size;
-
-                        if (tooth_min_anomaly > tooth_min_anomaly_strong)
-                            tooth_anomaly_mask[i] |= ToothAnomaly::strong_min_distance;
-
-                        if (tooth_max_anomaly > tooth_max_anomaly_strong)
-                            tooth_anomaly_mask[i] |= ToothAnomaly::strong_max_distance;
-
                         if (tooth_arc_anomaly > tooth_arc_anomaly_strong)
-                            tooth_anomaly_mask[i] |= ToothAnomaly::strong_arc;
+                            tooth_anomaly_mask[i] |= ToothAnomaly::arc;
 
                         if (tooth_gap_anomaly > tooth_gap_anomaly_strong)
-                            tooth_anomaly_mask[i] |= ToothAnomaly::strong_gap;
+                            tooth_anomaly_mask[i] |= ToothAnomaly::gap;
                     }
                 }
 
