@@ -29,6 +29,8 @@ using RGB = std::array<uint8_t, 3>;
 RGB g_selected_rgb  = {};
 int g_rgb_tolerance = 10; // 0-255 range
 
+
+
 template <typename T>
 T square(const T& value) {
     return value * value;
@@ -36,9 +38,16 @@ T square(const T& value) {
 
 enum ToothAnomaly: uint8_t {
     none = 0x0,
-    arc  = 0x1 << 1,
-    gap  = 0x1 << 2
+    gap  = 0x1 << 1,
+    arc  = 0x1 << 2
 };
+
+std::vector<uint8_t> g_tooth_anomaly_mask;
+
+void reset_anomaly_mask(size_t capacity) {
+    g_tooth_anomaly_mask.resize(capacity);
+    std::fill(g_tooth_anomaly_mask.begin(), g_tooth_anomaly_mask.end(), ToothAnomaly::none);
+}
 
 //
 void save_image(const cv::Mat& img) {
@@ -446,7 +455,7 @@ int main(int, char* argv[]) {
                     size_t m_ToothIdx;
                 };
 
-                std::vector<ToothMeasurement> tooth_measurements;
+                std::vector<ToothMeasurement> teeth;
 
                 // find the first (low) position where the mask changes from low to high
                 auto find_tooth_start = [](const auto& mask) -> std::optional<size_t> {
@@ -481,47 +490,53 @@ int main(int, char* argv[]) {
                         ++tooth_count;
 
                         ToothMeasurement new_measurement;
-                        new_measurement.m_StartMaskIdx  = i % tooth_mask.size();
+                        new_measurement.m_StartMaskIdx  = i % (tooth_mask.size() - 1);
                         new_measurement.m_ToothIdx      = tooth_count;
                         new_measurement.m_StartingAngle = std::atan2f(
                             largest_contour[new_measurement.m_StartMaskIdx].y - centroid_f.y,
                             largest_contour[new_measurement.m_StartMaskIdx].x - centroid_f.x
                         );
 
-                        tooth_measurements.push_back(std::move(new_measurement));
+                        teeth.push_back(std::move(new_measurement));
                     }
 
                     if (current_mask_value && !next_mask_value) {
                         // complete measurements from the last measurement
-                        auto& measurement = tooth_measurements.back();
+                        auto& measurement = teeth.back();
 
-                        measurement.m_EndMaskIdx = i % tooth_mask.size();
+                        measurement.m_EndMaskIdx = i % (tooth_mask.size() - 1);
                         measurement.m_EndingAngle = std::atan2f(
                             largest_contour[measurement.m_EndMaskIdx].y - centroid_f.y,
                             largest_contour[measurement.m_EndMaskIdx].x - centroid_f.x
                         );
 
-                        auto min_max_distances = std::minmax_element(
-                            distances.begin() + measurement.m_StartMaskIdx,
-                            distances.begin() + measurement.m_EndMaskIdx
-                        );
+                        // because of the wrapping structure, this is actually challenging for std::minmax_element...
+                        measurement.m_MinDistance = std::numeric_limits<double>::max();
+                        measurement.m_MaxDistance = -std::numeric_limits<double>::max();
 
-                        measurement.m_MinDistance = *min_max_distances.first;
-                        measurement.m_MaxDistance = *min_max_distances.second;
+                        for (size_t j = measurement.m_StartMaskIdx; j <= measurement.m_EndMaskIdx; ++j, j %= tooth_mask.size()) {
+                            if (distances[j] < measurement.m_MinDistance)
+                                measurement.m_MinDistance = distances[j];
+
+                            if (distances[j] > measurement.m_MaxDistance)
+                                measurement.m_MaxDistance = distances[j];
+                        }
                     }
                 }
+
+                reset_anomaly_mask(teeth.size());
 
                 {
                     // apply some statistics:
                     // - find the mean distance to the next tooth
                     // - establish variance for both tooth arcs and gaps (unbiased sample variance)
                     // - whenever the measurement exceeds the variance plus tolerance, present a signal
-                    std::vector<double> tooth_arcs;
                     std::vector<double> tooth_arc_gaps_to_next;
+                    std::vector<double> tooth_arcs;
 
-                    for (size_t i = 0; i < tooth_measurements.size(); ++i) {
-                        const auto& current = tooth_measurements[i];
-                        const auto& next    = tooth_measurements[(i + 1) % tooth_measurements.size()];;
+                    for (size_t i = 0; i < teeth.size(); ++i) {
+                        const auto& current = teeth[i];
+                        const auto& next    = teeth[(i + 1) % teeth.size()];;
 
                         tooth_arcs.push_back(
                             arc_length(current.m_StartingAngle, current.m_EndingAngle)
@@ -559,29 +574,77 @@ int main(int, char* argv[]) {
                     const double tooth_gap_variance = calculate_variance(tooth_arc_gaps_to_next, tooth_gap_mean);
                     const double tooth_gap_stddev   = std::sqrt(tooth_gap_variance);
 
-
                     // strong anomalies are more than twice the stddev from the mean,
                     // weak anomalies between once and twice the stddev
                     // regular observations are less than the stddev
                     //
                     // let's focus on finding strong anomalies first
-                    const double tooth_arc_anomaly_strong  = 2.0 * tooth_arc_stddev;
                     const double tooth_gap_anomaly_strong  = 2.0 * tooth_gap_stddev;
+                    const double tooth_arc_anomaly_strong  = 2.0 * tooth_arc_stddev;
 
-                    std::vector<uint8_t> tooth_anomaly_mask(tooth_measurements.size(), ToothAnomaly::none);
+                    for (size_t i = 0; i < teeth.size(); ++i) {
+                        double tooth_gap = tooth_arc_gaps_to_next[i];
+                        double tooth_arc = tooth_arcs[i];
 
-                    for (size_t i = 0; i < tooth_measurements.size(); ++i) {
-                        double tooth_arc          = tooth_arcs[i];
-                        double tooth_gap          = tooth_arc_gaps_to_next[i];
-
-                        double tooth_arc_anomaly  = std::abs(tooth_arc          - tooth_arc_mean);
-                        double tooth_gap_anomaly  = std::abs(tooth_gap          - tooth_gap_mean);
-
-                        if (tooth_arc_anomaly > tooth_arc_anomaly_strong)
-                            tooth_anomaly_mask[i] |= ToothAnomaly::arc;
+                        double tooth_arc_anomaly = std::abs(tooth_arc - tooth_arc_mean);
+                        double tooth_gap_anomaly = std::abs(tooth_gap - tooth_gap_mean);
 
                         if (tooth_gap_anomaly > tooth_gap_anomaly_strong)
-                            tooth_anomaly_mask[i] |= ToothAnomaly::gap;
+                            g_tooth_anomaly_mask[i] |= ToothAnomaly::gap;
+
+                        if (tooth_arc_anomaly > tooth_arc_anomaly_strong)
+                            g_tooth_anomaly_mask[i] |= ToothAnomaly::arc;
+                    }
+                }
+
+                // visualize anomalies using a simple line from the center towards the tooth
+                {
+                    auto draw_arrow = [](
+                        const cv::Point2d& gear_center,
+                        double             gear_radius,
+                        double             angle,
+                        const cv::Scalar&  color     = cv::Scalar(255, 255, 127),
+                        int                thickness = 3
+                    ) {
+                        // determine intersection from the center with the circle at radius
+                        cv::Point2d to(
+                            gear_center.x + 0.95 * gear_radius * std::cos(angle),
+                            gear_center.y + 0.95 * gear_radius * std::sin(angle)
+                        );
+
+                        cv::Point2d from(
+                            gear_center.x + 0.5 * gear_radius * std::cos(angle),
+                            gear_center.y + 0.5 * gear_radius * std::sin(angle)
+                        );
+
+                        cv::Point2d left(
+                            gear_center.x + 0.9 * gear_radius * std::cos(angle - std::numbers::pi / 40.0),
+                            gear_center.y + 0.9 * gear_radius * std::sin(angle - std::numbers::pi / 40.0)
+                        );
+
+                        cv::Point2d right(
+                            gear_center.x + 0.9 * gear_radius * std::cos(angle + std::numbers::pi / 40.0),
+                            gear_center.y + 0.9 * gear_radius * std::sin(angle + std::numbers::pi / 40.0)
+                        );
+
+                        cv::line(g_webcam_image, from,  to, color, thickness);
+                        cv::line(g_webcam_image, left,  to, color, thickness);
+                        cv::line(g_webcam_image, right, to, color, thickness);
+                    };
+
+                    for (size_t i = 0; i < teeth.size(); ++i) {
+                        const auto& measurement       = teeth[i];
+                        //const auto& next_measurement  = teeth[(i + 1) % teeth.size()];;
+                        const auto& anomaly_detection = g_tooth_anomaly_mask[i];
+
+                        if (anomaly_detection & ToothAnomaly::arc) {
+                            draw_arrow(
+                                centroid_d,
+                                measurement.m_MinDistance,
+                                (measurement.m_EndingAngle + measurement.m_StartingAngle) / 2.0,
+                                cv::Scalar(255, 255, 127)
+                            );
+                        }
                     }
                 }
 
@@ -654,6 +717,26 @@ int main(int, char* argv[]) {
                 case 'g':
                 case 'G':
                     save_image(g_webcam_image);
+                    break;
+
+                case '1':
+                    for (const auto &x: g_tooth_anomaly_mask) {
+                        if (x & ToothAnomaly::arc)
+                            std::cout << '1';
+                        else
+                            std::cout << '0';
+                    }
+                    std::cout << '\n';
+                    break;
+
+                case '2':
+                    for (const auto& x: g_tooth_anomaly_mask) {
+                        if (x & ToothAnomaly::gap)
+                            std::cout << '2';
+                        else
+                            std::cout << '0';
+                    }
+                    std::cout << '\n';
                     break;
 
                 case 32: // space bar
