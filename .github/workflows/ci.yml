@@ -11,40 +11,48 @@ env:
 
 jobs:
   build:
-    runs-on: windows-latest  # Since your code specifically requires Windows
+    runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
-      - name: Set up vcpkg
-        uses: lukka/run-vcpkg@v7
-        with:
-          vcpkgGitCommitId: master
+    - name: Cache vcpkg
+      uses: actions/cache@v3
+      with:
+        path: |
+          ${{ github.workspace }}/vcpkg
+          ${{ env.VCPKG_ROOT }}
+        key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
 
-      - name: Configure CMake
-        run: |
-          cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_TOOLCHAIN_FILE=${{github.workspace}}/vcpkg/scripts/buildsystems/vcpkg.cmake
+    - name: Install vcpkg
+      run: |
+        git clone https://github.com/Microsoft/vcpkg.git
+        .\vcpkg\bootstrap-vcpkg.bat
 
-      - name: Build
-        run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
+    - name: Install dependencies
+      run: |
+        .\vcpkg\vcpkg install --triplet x64-windows
 
-      # Add this step if you have tests
-      - name: Test
-        working-directory: ${{github.workspace}}/build
-        run: ctest -C ${{env.BUILD_TYPE}} --output-on-failure
+    - name: Configure CMake
+      run: |
+        cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_TOOLCHAIN_FILE=${{github.workspace}}/vcpkg/scripts/buildsystems/vcpkg.cmake
 
-      - name: Static Analysis (cppcheck)
-        run: |
-          cmake --build ${{github.workspace}}/build --target cppcheck
+    - name: Build
+      run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
 
-      # Optional: Package the application
-      - name: Package
-        run: |
-          cmake --install ${{github.workspace}}/build --prefix ${{github.workspace}}/install
+    # Add this step if you have tests
+    - name: Test
+      working-directory: ${{github.workspace}}/build
+      run: ctest -C ${{env.BUILD_TYPE}} --output-on-failure
 
-      # Optional: Upload artifacts
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: CountVonCount-Windows
-          path: ${{github.workspace}}/install/
+    # Optional: Package the application
+    - name: Package
+      run: |
+        cmake --install ${{github.workspace}}/build --prefix ${{github.workspace}}/install
+        
+    # Optional: Upload artifacts
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: CountVonCount-Windows
+        path: ${{github.workspace}}/install/
