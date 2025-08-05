@@ -2,6 +2,11 @@
 #include "platform/platform.h"
 #include "platform/build_date.h"
 #include "io/jpg.h"
+#include "io/data_location.h"
+#include "types/tooth_anomaly.h"
+#include "types/rgb.h"
+#include "types/color_range.h"
+#include "math/square.h"
 
 #include <opencv2/opencv.hpp>
 #include <opencv2/imgproc.hpp>
@@ -24,30 +29,10 @@ cv::Mat g_foreground;        // BGR
 cv::Mat g_foreground_mask;   // grayscale
 cv::Mat g_webcam_image;      // BGR
 
-using RGB = std::array<uint8_t, 3>;
-
-RGB g_selected_rgb  = {};
+cc::RGB g_selected_rgb  = {};
 int g_rgb_tolerance = 10; // 0-255 range
 
 static constexpr const size_t k_MinimumToothCount = 8;
-
-template <typename T>
-T square(const T& value) {
-    return value * value;
-}
-
-enum ToothAnomaly: uint8_t {
-    none = 0x0,
-    gap  = 0x1 << 1,
-    arc  = 0x1 << 2
-};
-
-std::vector<uint8_t> g_tooth_anomaly_mask;
-
-void reset_anomaly_mask(size_t capacity) {
-    g_tooth_anomaly_mask.resize(capacity);
-    std::fill(g_tooth_anomaly_mask.begin(), g_tooth_anomaly_mask.end(), ToothAnomaly::none);
-}
 
 //
 void save_image(const cv::Mat& img) {
@@ -140,21 +125,6 @@ void load_settings(int camera_id = 0) {
     g_webcam_resolution = resolutions[selected_resolution];
 }
 
-std::filesystem::path find_data_folder(const std::filesystem::path& exe_path) {
-    namespace fs = std::filesystem;
-
-    fs::path current_path = exe_path;
-
-    while (current_path.has_parent_path()) {
-        if (fs::exists(current_path / "data"))
-            return current_path / "data";
-
-        current_path = current_path.parent_path();
-    }
-
-    throw std::runtime_error("Failed to find data folder");
-}
-
 struct SensitivityBarHandler {
     int m_ToleranceRange = 0;
 
@@ -200,31 +170,6 @@ static void main_window_mouse_event(
     };
 }
 
-struct ColorRange {
-    RGB m_MinRGB = { 0x00, 0x00, 0x00 };
-    RGB m_MaxRGB = { 0xFF, 0xFF, 0xFF };
-};
-
-ColorRange determine_color_range(int tolerance_range) {
-    ColorRange result;
-
-    for (int i = 0; i < 3; ++i) {
-        int lower = g_selected_rgb[i] - (tolerance_range / 2);
-        int upper = g_selected_rgb[i] + (tolerance_range / 2);
-
-        if (lower < 0)
-            lower = 0;
-
-        if (upper > 255)
-            upper = 255;
-
-        result.m_MinRGB[i] = static_cast<uint8_t>(lower);
-        result.m_MaxRGB[i] = static_cast<uint8_t>(upper);
-    }
-
-    return result;
-}
-
 void initialize_image_buffers() {
     if (g_foreground.empty())
         g_foreground.create(g_webcam_image.size(), CV_8UC3);
@@ -232,8 +177,8 @@ void initialize_image_buffers() {
         g_foreground_mask.create(g_webcam_image.size(), CV_8UC1);
 }
 
-void determine_foreground(int tolerance_range) {
-    auto [min_rgb, max_rgb] = determine_color_range(tolerance_range);
+void determine_foreground(const cc::RGB& selected_color, int tolerance_range) {
+    auto [min_rgb, max_rgb] = cc::determine_color_range(selected_color, tolerance_range);
     cv::inRange(
         g_webcam_image,
         min_rgb,
@@ -301,7 +246,7 @@ int main(int, char* argv[]) {
     std::cout << "Built " << cvc::get_days_since_build() << " days ago\n";
 
     fs::path exe_path(argv[0]);
-    auto data_path = find_data_folder(exe_path);
+    auto data_path = cc::find_data_folder(exe_path);
     std::cout << "Exe path:  " << exe_path.string() << '\n';
     std::cout << "Data path: " << data_path.string() << '\n';
 
@@ -357,7 +302,7 @@ int main(int, char* argv[]) {
             initialize_image_buffers();
 
             // ----- video processing -----
-            determine_foreground(trackbar_handler.m_ToleranceRange);
+            determine_foreground(g_selected_rgb, trackbar_handler.m_ToleranceRange);
 
             std::vector<std::vector<cv::Point>> contours;
             std::vector<cv::Vec4i> hierarchy;
@@ -526,7 +471,7 @@ int main(int, char* argv[]) {
 
                 // early exit -- if we have found less than 8 teeth, it's probably not a gear that we found
                 if (tooth_count >= k_MinimumToothCount) {
-                    reset_anomaly_mask(teeth.size());
+                    auto tooth_anomaly_mask = cc::create_anomaly_mask(teeth.size());
 
                     {
                         // apply some statistics:
@@ -563,7 +508,7 @@ int main(int, char* argv[]) {
                                 std::end(values),
                                 0.0,
                                 [mean](double acc, const auto &value) {
-                                    return acc + square(value - mean);
+                                    return acc + cc::square(value - mean);
                                 }
                             ) / values.size();;
                         };
@@ -592,10 +537,10 @@ int main(int, char* argv[]) {
                             double tooth_gap_anomaly = std::abs(tooth_gap - tooth_gap_mean);
 
                             if (tooth_gap_anomaly > tooth_gap_anomaly_strong)
-                                g_tooth_anomaly_mask[i] |= ToothAnomaly::gap;
+                                tooth_anomaly_mask[i] |= cc::ToothAnomaly::gap;
 
                             if (tooth_arc_anomaly > tooth_arc_anomaly_strong)
-                                g_tooth_anomaly_mask[i] |= ToothAnomaly::arc;
+                                tooth_anomaly_mask[i] |= cc::ToothAnomaly::arc;
                         }
                     }
 
@@ -637,9 +582,9 @@ int main(int, char* argv[]) {
                         for (size_t i = 0; i < teeth.size(); ++i) {
                             const auto &measurement = teeth[i];
                             //const auto& next_measurement  = teeth[(i + 1) % teeth.size()];;
-                            const auto &anomaly_detection = g_tooth_anomaly_mask[i];
+                            const auto &anomaly_detection = tooth_anomaly_mask[i];
 
-                            if (anomaly_detection & ToothAnomaly::arc) {
+                            if (anomaly_detection & cc::ToothAnomaly::arc) {
                                 draw_arrow(
                                     centroid_d,
                                     measurement.m_MinDistance,
@@ -720,26 +665,6 @@ int main(int, char* argv[]) {
                 case 'g':
                 case 'G':
                     save_image(g_webcam_image);
-                    break;
-
-                case '1':
-                    for (const auto &x: g_tooth_anomaly_mask) {
-                        if (x & ToothAnomaly::arc)
-                            std::cout << '1';
-                        else
-                            std::cout << '0';
-                    }
-                    std::cout << '\n';
-                    break;
-
-                case '2':
-                    for (const auto& x: g_tooth_anomaly_mask) {
-                        if (x & ToothAnomaly::gap)
-                            std::cout << '2';
-                        else
-                            std::cout << '0';
-                    }
-                    std::cout << '\n';
                     break;
 
                 case 32: // space bar
