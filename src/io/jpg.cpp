@@ -12,68 +12,97 @@
 #undef STB_IMAGE_WRITE_IMPLEMENTATION
 
 namespace cc::io {
+    namespace detail {
+        void StbiDeleter::operator()(stbi_uc* data) const {
+            stbi_image_free(data);
+        }
+
+        cv::Mat convert_to_opencv_format(
+            stbi_uc* data,
+            int width,
+            int height,
+            int num_channels
+        ) {
+            switch (num_channels) {
+                case 1:
+                    return cv::Mat(height, width, CV_8UC1, data);
+
+                case 3: {
+                    // Convert RGB (STB) to BGR (OpenCV)
+                    cv::Mat rgb(height, width, CV_8UC3, data);
+                    cv::Mat bgr;
+                    cv::cvtColor(rgb, bgr, cv::COLOR_RGB2BGR);
+                    return bgr;
+                }
+
+                case 4:
+                    return cv::Mat(height, width, CV_8UC4, data);
+
+                default:
+                    throw ImageError("Unsupported number of channels: " + std::to_string(num_channels));
+            }
+
+        }
+    }
+
+    ImageError::ImageError(const std::string& message):
+        std::runtime_error(message)
+    {
+    }
+
     cv::Mat load_jpg(const std::filesystem::path& p) {
         int width, height, channels;
 
-        StbResource raw_data(
+        StbiResource raw_data(
             stbi_load(
                 p.string().c_str(), // filename
                 &width,             // (out) image width
                 &height,            // (out) image height
                 &channels,          // (out) number of channels
                 0                   // (desired number of channels when converting)
-            ),
-            &stbi_image_free
+            )
         );
 
         if (!raw_data) {
-            std::cout << "Failed to load jpg: " << p.string() << '\n';
-            std::cout << stbi_failure_reason();
-            return {};
+            throw ImageError(
+                "Failed to load jpg: '" + p.string() +
+                "': " + stbi_failure_reason()
+            );
         }
 
-        switch (channels) {
-            case 1: return { height, width, CV_8UC1, raw_data.get() };
-            case 3: {
-                // assume data is in RGB -- openCV expects BGR so convert it
-                cv::Mat rgb(height, width, CV_8UC3, raw_data.get());
-                cv::Mat bgr;
-                cv::cvtColor(rgb, bgr, cv::COLOR_RGB2BGR);
-                return bgr;
-            }
-
-            case 4: return { height, width, CV_8UC4, raw_data.get() };
-
-            default:
-                return {};
-        }
+        return detail::convert_to_opencv_format(
+            raw_data.get(),
+            width,
+            height,
+            channels
+        );
     }
 
     void save_jpg(const cv::Mat& image, const std::filesystem::path& p) {
+        if (image.empty())
+            throw ImageError("Cannot save empty image");
+
         // openCV defaults to BGR images, while stb defaults to RGB... copy and convert
+        // convert to RGB if needed
+        cv::Mat to_write;
+        if (image.channels() == 3)
+            cv::cvtColor(image, to_write, cv::COLOR_BGR2RGB);
+        else
+            to_write = image;
 
-        if (image.channels() == 3) {
-            cv::Mat rgb;
+        int success = stbi_write_jpg(
+            p.string().c_str(), // filename
+            to_write.cols,           // image width
+            to_write.rows,           // image height
+            to_write.channels(),     // number of channels
+            to_write.data,           // data bytes
+            90                  // compression ratio
+        );
 
-            cv::cvtColor(image, rgb, cv::COLOR_BGR2RGB);
-
-            stbi_write_jpg(
-                p.string().c_str(), // filename
-                rgb.cols,           // image width
-                rgb.rows,           // image height
-                rgb.channels(),     // number of channels
-                rgb.data,           // data bytes
-                90                  // compression ratio
-            );
-        }
-        else {
-            stbi_write_jpg(
-                p.string().c_str(), // filename
-                image.cols,         // image width
-                image.rows,         // image height
-                image.channels(),   // number of channels
-                image.data,         // data bytes
-                90                  // compression ratio
+        if (!success) {
+            throw ImageError(
+                "Failed to save jpg: '" + p.string() +
+                "': " + stbi_failure_reason()
             );
         }
     }

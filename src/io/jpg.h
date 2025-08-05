@@ -7,7 +7,27 @@
 #include <opencv2/opencv.hpp>
 
 namespace cc::io {
-    using StbResource = std::unique_ptr<stbi_uc, decltype(&stbi_image_free)>;
+    namespace detail {
+        struct StbiDeleter {
+            void operator()(stbi_uc* data) const;
+        };
+
+        cv::Mat convert_to_opencv_format(
+            stbi_uc* data,
+            int width,
+            int height,
+            int num_channels
+        );
+    }
+
+    using StbiResource = std::unique_ptr<stbi_uc, detail::StbiDeleter>;
+
+    class ImageError:
+        public std::runtime_error
+    {
+    public:
+        explicit ImageError(const std::string& message);
+    };
 
     cv::Mat load_jpg(const std::filesystem::path& p);
     void    save_jpg(const cv::Mat& image, const std::filesystem::path& p);
