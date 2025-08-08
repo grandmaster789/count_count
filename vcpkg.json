@@ -9,7 +9,8 @@
     "name" : "stb",
     "version>=" : "2024-07-29#1"
   }, {
-    "name" : "gtest",
-    "version>=" : "1.17.0#1"
-  } ]
+    "name" : "catch2",
+    "version>=" : "3.4.0"
+  }
+  ]
 }

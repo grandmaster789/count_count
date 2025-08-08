@@ -9,7 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(OpenCV REQUIRED)
 find_package(Stb REQUIRED)
-find_package(GTest REQUIRED)
+find_package(Catch2 3 REQUIRED)
 
 add_executable(CountVonCount)       # main executable
 add_library   (CountVonCountLib)    # project code as a static library
@@ -67,7 +67,7 @@ target_include_directories(CountVonCountTests PRIVATE
 )
 target_link_libraries     (CountVonCountTests PRIVATE
         ${OpenCV_LIBS}
-        GTest::gtest_main
+        Catch2::Catch2WithMain
         CountVonCountLib
 )
 target_link_directories   (CountVonCountTests PRIVATE

@@ -6,6 +6,7 @@
 #include "types/tooth_anomaly.h"
 #include "types/rgb.h"
 #include "types/color_range.h"
+#include "types/resolution.h"
 #include "math/square.h"
 
 #include <opencv2/opencv.hpp>
@@ -52,36 +53,27 @@ void save_image(const cv::Mat& img) {
     std::cout << "Saved " << timestamped_filename << '\n';
 }
 
-struct Resolution {
-    int width, height;
-
-    friend std::ostream& operator << (std::ostream& os, const Resolution& res) {
-        os << '[' << res.width << " x " << res.height << ']';
-        return os;
-    }
-};
-
-Resolution g_webcam_resolution;
+cc::Resolution g_webcam_resolution;
 
 // the openCV api doesn't provide a method to actually query supported resolutions
 // so we'll just check a couple common ones
-bool check_resolution(int camera_id, const Resolution& res) {
+bool check_resolution(int camera_id, const cc::Resolution& res) {
     cv::VideoCapture cap(camera_id);
-    cap.set(cv::CAP_PROP_FRAME_WIDTH, res.width);
-    cap.set(cv::CAP_PROP_FRAME_HEIGHT, res.height);
+    cap.set(cv::CAP_PROP_FRAME_WIDTH, res.m_Width);
+    cap.set(cv::CAP_PROP_FRAME_HEIGHT, res.m_Height);
 
     int actual_width  = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
     int actual_height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
 
     return
-        (actual_width == res.width) &&
-        (actual_height == res.height);
+        (actual_width == res.m_Width) &&
+        (actual_height == res.m_Height);
 }
 
 void save_settings() {
     std::ofstream cfg("count_count.cfg");
     cfg
-            << g_webcam_resolution.width << ' ' << g_webcam_resolution.height << '\n'
+            << g_webcam_resolution.m_Width << ' ' << g_webcam_resolution.m_Height << '\n'
             // bit of casting to keep it human-readable
             << static_cast<int>(g_selected_rgb[0]) << ' '
             << static_cast<int>(g_selected_rgb[1]) << ' '
@@ -108,11 +100,11 @@ void load_settings(int camera_id = 0) {
     }
 
     // no settings available, provide some defaults
-    std::vector<Resolution> resolutions = {
-        Resolution { 3840, 2160 }, // 4k
-        Resolution { 1920, 1080},  // 1080p
-        Resolution { 1280, 720 },  // 720p
-        Resolution { 640,  480 }   // 480p
+    std::vector<cc::Resolution> resolutions = {
+        cc::Resolution { 3840, 2160 }, // 4k
+        cc::Resolution { 1920, 1080},  // 1080p
+        cc::Resolution { 1280, 720 },  // 720p
+        cc::Resolution { 640,  480 }   // 480p
     };
 
     size_t selected_resolution = 0;
@@ -265,8 +257,8 @@ int main(int, char* argv[]) {
                 std::cerr << "Cannot open webcam\n";
                 return -1;
             }
-            webcam.set(cv::CAP_PROP_FRAME_WIDTH,  g_webcam_resolution.width);
-            webcam.set(cv::CAP_PROP_FRAME_HEIGHT, g_webcam_resolution.height);
+            webcam.set(cv::CAP_PROP_FRAME_WIDTH,  g_webcam_resolution.m_Width);
+            webcam.set(cv::CAP_PROP_FRAME_HEIGHT, g_webcam_resolution.m_Height);
         }
         else {
             static_image = cc::io::load_jpg((data_path / "test_broken_tooth_002.jpg"));
