@@ -2,7 +2,8 @@
 
 namespace cc::app {
     bool CameraManager::initialize(int device_id) {
-        return false
+        (void)device_id;
+        return false;
     }
 
     cv::Mat CameraManager::grab_frame() {
@@ -14,6 +15,6 @@ namespace cc::app {
     }
 
     void CameraManager::set_resolution(const Resolution& res) {
-
+        (void)res;
     }
 }
