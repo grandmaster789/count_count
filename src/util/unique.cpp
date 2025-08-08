@@ -7,6 +7,9 @@ namespace cvc::util {
     ) {
         FILE* f = std::fopen(p.string().c_str(), flags);
 
-        return UniqueFile(f, &std::fclose);
+        if (!f)
+            throw std::runtime_error("Failed to open file: " + p.string());
+
+        return { f, std::fclose };
     }
 }

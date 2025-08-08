@@ -68,10 +68,16 @@ namespace cc::async {
             if (m_Head.m_Next == &m_Head)
                 return nullptr;
 
-            return std::exchange(
+            Task* result = std::exchange(
                 m_Head.m_Next,
                 m_Head.m_Next->m_Next
             );
+
+            // if the tail was removed by the pop operation, update it to point to the head
+            if (result == m_Tail)
+                m_Tail = &m_Head;
+
+            return result;
         }
 
         struct Sender {
