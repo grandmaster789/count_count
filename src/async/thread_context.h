@@ -11,9 +11,7 @@ namespace cc::async {
         using RunLoop::get_scheduler;
         using RunLoop::finish;
 
-        void join() {
-            m_Thread.join();
-        }
+        void join();
 
     private:
         std::thread m_Thread{ [this] { run(); } };

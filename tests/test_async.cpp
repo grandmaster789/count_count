@@ -12,9 +12,9 @@ TEST_CASE("Just", "[async]") {
 
     auto work = just(123);
     CoutReceiver receiver;
-    auto operational_state = connect(work, receiver);
+    auto operational_state = work.connect(receiver);
 
-    start(operational_state);
+    operational_state.start();
 }
 
 TEST_CASE("Then", "[async]") {
@@ -28,9 +28,9 @@ TEST_CASE("Then", "[async]") {
     );
 
     CoutReceiver receiver;
-    auto operational_state = connect(work, receiver);
+    auto operational_state = work.connect(receiver);
 
-    start(operational_state);
+    operational_state.start();
 }
 
 TEST_CASE("SyncWait", "[async]") {
@@ -54,13 +54,13 @@ TEST_CASE("RunLoopContext", "[async]") {
 
     auto loop_scheduler = loop.get_scheduler();
 
-    auto work1 = then(schedule(loop_scheduler), [] (auto) { return 1; } );
-    auto operational_state1 = connect(work1, CoutReceiver{});
-    start(operational_state1); // this will enqueue the work in the schedule
+    auto work1 = then(loop_scheduler.schedule(), [](auto) { return 1; });
+    auto operational_state1 = work1.connect(CoutReceiver{});
+    operational_state1.start(); // this will enqueue the work in the schedule
 
-    auto work2 = then(schedule(loop_scheduler), [] (auto) { return 2; } );
-    auto operational_state2 = connect(work2, CoutReceiver{});
-    start(operational_state2);
+    auto work2 = then(loop_scheduler.schedule(), [](auto) { return 2; });
+    auto operational_state2 = work2.connect(CoutReceiver{});
+    operational_state2.start();
 
     loop.finish(); // indicate that we're done setting up the workload
     loop.run();    // run the enqueued work
@@ -73,7 +73,7 @@ TEST_CASE("ThreadContext", "[async]") {
 
     auto scheduler = ctx.get_scheduler();
 
-    auto work1 = then(schedule(scheduler), [] (auto) { return 3; } ); // put some work onto the thread context
+    auto work1 = then(scheduler.schedule(), [] (auto) { return 3; } ); // put some work onto the thread context
     auto work2 = then(work1, [](int i) { return i + 1; });            // when the above task completes, perform extra work on it
     auto final_result = sync_wait(work2);                             // collect the final result
 

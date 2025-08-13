@@ -9,10 +9,10 @@ namespace cc::async {
         typename t_Receiver
     >
     using connect_result_t = decltype(
-        connect(
-            std::declval<t_Sender>(),
-            std::declval<t_Receiver>()
-        )
+        std::declval<t_Sender>()
+            .connect(
+                std::declval<t_Receiver>()
+            )
     );
 
     template <typename t_Sender>

@@ -7,18 +7,13 @@
 namespace cc::async {
     // mostly for debugging
     struct CoutReceiver {
-        friend void set_value(CoutReceiver, auto value) {
-            std::cout << "[async]:> " << value << '\n';
-        }
-
-        friend void set_error(CoutReceiver, std::exception_ptr) {
-            std::terminate();
-        }
-
-        friend void set_stopped(CoutReceiver) {
-            std::terminate();
-        }
+               template <typename T>
+               void set_value(T&& value);
+        inline void set_error(std::exception_ptr ptr);
+        inline void set_stopped();
     };
 }
+
+#include "cout_receiver.inl"
 
 #endif

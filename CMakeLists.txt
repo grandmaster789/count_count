@@ -80,15 +80,15 @@ if (MSVC)
     target_compile_definitions(CountVonCountTests PRIVATE _CRT_SECURE_NO_WARNINGS)
 
     target_compile_options(CountVonCountLib PRIVATE
-            /W4 # Enable all warnings
-            /WX # Warnings as errors
-            /MP # Enable multi-processor compilation
+            /W4     # Enable all warnings
+            /WX     # Warnings as errors
+            /MP     # Enable multi-processor compilation
     )
 
     target_compile_options(CountVonCountTests PRIVATE
-            /W4 # Enable all warnings
-            /WX # Warnings as errors
-            /MP # Enable multi-processor compilation
+            /W4     # Enable all warnings
+            /WX     # Warnings as errors
+            /MP     # Enable multi-processor compilation
     )
 
     # MSVC specific, this will avoid showing a console window upon startup
