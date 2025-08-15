@@ -13,6 +13,21 @@ namespace cc::async {
         void start();
     };
 
+    template <typename t_Receiver>
+    struct JustErrorOperation {
+        t_Receiver         m_Receiver;
+        std::exception_ptr m_Error;
+
+        void start();
+    };
+
+    template <typename t_Receiver>
+    struct JustStoppedOperation {
+        t_Receiver m_Receiver;
+
+        void start();
+    };
+
     template <typename t_Value>
     struct JustSender {
         using result_t = t_Value;
@@ -23,8 +38,22 @@ namespace cc::async {
         auto connect(t_Receiver receiver) -> JustOperation<t_Receiver, t_Value>;
     };
 
+    struct JustErrorSender {
+        std::exception_ptr m_Error;
+
+        template <typename t_Receiver>
+        auto connect(t_Receiver receiver) -> JustErrorOperation<t_Receiver>;
+    };
+
+    struct JustStoppedSender {
+        template <typename t_Receiver>
+        auto connect(t_Receiver receiver) -> JustStoppedOperation<t_Receiver>;
+    };
+
     template <typename t_Value>
-    auto just(t_Value value);
+    auto just        (t_Value value)            -> JustSender<t_Value>;
+    auto just_error  (std::exception_ptr error) -> JustErrorSender;
+    auto just_stopped()                         -> JustStoppedSender;
 }
 
 #include "just.inl"

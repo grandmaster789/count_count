@@ -13,9 +13,11 @@ namespace cc::app {
         [[nodiscard]] cv::Mat    grab_frame();
 
         [[nodiscard]] Resolution get_resolution() const;
-        void set_resolution(const Resolution& res); // NOTE this might not actually set the resolution as expected
+        [[nodiscard]] bool       set_resolution(const Resolution& res); // NOTE this might not actually set the resolution as expected; returns false if it didn't work out
 
     private:
+        bool check_resolution(int camera_id, const Resolution& res) const;
+
         FlatMap<int, Resolution> m_Cameras;
     };
 }

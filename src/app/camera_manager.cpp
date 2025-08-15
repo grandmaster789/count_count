@@ -14,7 +14,16 @@ namespace cc::app {
         return {};
     }
 
-    void CameraManager::set_resolution(const Resolution& res) {
+    bool CameraManager::set_resolution(const Resolution& res) {
         (void)res;
+
+        return false;
+    }
+
+    bool CameraManager::check_resolution(int camera_id, const Resolution& res) const {
+        (void)camera_id;
+        (void)res;
+
+        return false;
     }
 }

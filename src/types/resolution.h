@@ -9,6 +9,7 @@ namespace cc {
         int m_Height;
 
         friend std::ostream& operator << (std::ostream& os, const Resolution& res);
+        friend std::istream& operator >> (std::istream& is,       Resolution& res);
     };
 }
 

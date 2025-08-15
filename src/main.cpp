@@ -7,6 +7,7 @@
 #include "types/rgb.h"
 #include "types/color_range.h"
 #include "types/resolution.h"
+#include "types/settings.h"
 #include "math/square.h"
 
 #include <opencv2/opencv.hpp>
@@ -22,6 +23,8 @@
 #include <numeric>
 #include <numbers>
 
+#include <execution>
+
 #if CVC_PLATFORM != CVC_PLATFORM_WINDOWS
     #error "Currently only Windows is supported"
 #endif
@@ -30,8 +33,7 @@ cv::Mat g_foreground;        // BGR
 cv::Mat g_foreground_mask;   // grayscale
 cv::Mat g_webcam_image;      // BGR
 
-cc::RGB g_selected_rgb  = {};
-int g_rgb_tolerance = 10; // 0-255 range
+cc::Settings g_Settings;
 
 static constexpr const size_t k_MinimumToothCount = 8;
 
@@ -53,8 +55,6 @@ void save_image(const cv::Mat& img) {
     std::cout << "Saved " << timestamped_filename << '\n';
 }
 
-cc::Resolution g_webcam_resolution;
-
 // the openCV api doesn't provide a method to actually query supported resolutions
 // so we'll just check a couple common ones
 bool check_resolution(int camera_id, const cc::Resolution& res) {
@@ -72,29 +72,15 @@ bool check_resolution(int camera_id, const cc::Resolution& res) {
 
 void save_settings() {
     std::ofstream cfg("count_count.cfg");
-    cfg
-            << g_webcam_resolution.m_Width << ' ' << g_webcam_resolution.m_Height << '\n'
-            // bit of casting to keep it human-readable
-            << static_cast<int>(g_selected_rgb[0]) << ' '
-            << static_cast<int>(g_selected_rgb[1]) << ' '
-            << static_cast<int>(g_selected_rgb[2]) << ' '
-            << g_rgb_tolerance << '\n';
+    cfg << g_Settings;
 }
 
 void load_settings(int camera_id = 0) {
     // if a resolution was selected before, use that
     if (std::filesystem::exists("count_count.cfg")) {
         std::ifstream cfg("count_count.cfg");
-        int width         = 0;
-        int height        = 0;
 
-        cfg >> width >> height
-            >> g_selected_rgb[0]
-            >> g_selected_rgb[1]
-            >> g_selected_rgb[2]
-            >> g_rgb_tolerance;
-
-        g_webcam_resolution = { width, height };
+        cfg >> g_Settings;
 
         return;
     }
@@ -114,14 +100,12 @@ void load_settings(int camera_id = 0) {
             break;
     }
 
-    g_webcam_resolution = resolutions[selected_resolution];
+    g_Settings.m_SourceResolution = resolutions[selected_resolution];
 }
 
 struct SensitivityBarHandler {
-    int m_ToleranceRange = 0;
-
     void on_track_sensitivity_changed(int new_value) {
-        m_ToleranceRange = new_value;
+        g_Settings.m_ForegroundColorTolerance = new_value;
     }
 };
 
@@ -143,17 +127,18 @@ static void main_window_mouse_event(
     switch (evt) {
     case cv::MouseEventTypes::EVENT_LBUTTONDOWN:
         std::cout << "Clicked at (" << x << ", " << y << ")\n";
-        g_selected_rgb[0] = g_webcam_image.at<cv::Vec3b>(y, x)[0];
-        g_selected_rgb[1] = g_webcam_image.at<cv::Vec3b>(y, x)[1];
-        g_selected_rgb[2] = g_webcam_image.at<cv::Vec3b>(y, x)[2];
+
+        g_Settings.m_ForegroundColor[0] = g_webcam_image.at<cv::Vec3b>(y, x)[0];
+        g_Settings.m_ForegroundColor[1] = g_webcam_image.at<cv::Vec3b>(y, x)[1];
+        g_Settings.m_ForegroundColor[2] = g_webcam_image.at<cv::Vec3b>(y, x)[2];
 
         std::cout << "RGB is #"
             << std::hex
             << std::setw(2)
             << std::setfill('0')
-            << static_cast<int>(g_selected_rgb[0])
-            << static_cast<int>(g_selected_rgb[1])
-            << static_cast<int>(g_selected_rgb[2])
+            << static_cast<int>(g_Settings.m_ForegroundColor[0])
+            << static_cast<int>(g_Settings.m_ForegroundColor[1])
+            << static_cast<int>(g_Settings.m_ForegroundColor[2])
             << '\n';
         break;
 
@@ -229,7 +214,7 @@ double arc_length(
 }
 
 int main(int, char* argv[]) {
-    constexpr static const bool use_live_video = false;
+    constexpr static const bool use_live_video = true;
 
     namespace fs = std::filesystem;
 
@@ -245,7 +230,7 @@ int main(int, char* argv[]) {
     {
         load_settings();
 
-        std::cout << "Selected resolution: " << g_webcam_resolution << '\n';
+        std::cout << "Selected resolution: " << g_Settings.m_SourceResolution << '\n';
 
         cv::Mat static_image;
         cv::VideoCapture webcam;
@@ -257,8 +242,8 @@ int main(int, char* argv[]) {
                 std::cerr << "Cannot open webcam\n";
                 return -1;
             }
-            webcam.set(cv::CAP_PROP_FRAME_WIDTH,  g_webcam_resolution.m_Width);
-            webcam.set(cv::CAP_PROP_FRAME_HEIGHT, g_webcam_resolution.m_Height);
+            webcam.set(cv::CAP_PROP_FRAME_WIDTH,  g_Settings.m_SourceResolution.m_Width);
+            webcam.set(cv::CAP_PROP_FRAME_HEIGHT, g_Settings.m_SourceResolution.m_Height);
         }
         else {
             static_image = cc::io::load_jpg((data_path / "test_broken_tooth_002.jpg"));
@@ -269,7 +254,7 @@ int main(int, char* argv[]) {
         cv::String main_window = "Webcam Video Stream";
         cv::namedWindow(main_window, cv::WINDOW_KEEPRATIO | cv::WINDOW_AUTOSIZE); // create a resizeable window
         cv::createTrackbar("Sensitivity", main_window, nullptr, 255, track_sensitivity_changed, &trackbar_handler);
-        cv::setTrackbarPos("Sensitivity", main_window, g_rgb_tolerance);
+        cv::setTrackbarPos("Sensitivity", main_window, g_Settings.m_ForegroundColorTolerance);
         cv::setMouseCallback(main_window, main_window_mouse_event);
 
         int show = 0;
@@ -294,7 +279,10 @@ int main(int, char* argv[]) {
             initialize_image_buffers();
 
             // ----- video processing -----
-            determine_foreground(g_selected_rgb, trackbar_handler.m_ToleranceRange);
+            determine_foreground(
+                g_Settings.m_ForegroundColor,
+                g_Settings.m_ForegroundColorTolerance
+            );
 
             std::vector<std::vector<cv::Point>> contours;
             std::vector<cv::Vec4i> hierarchy;
