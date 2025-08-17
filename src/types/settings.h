@@ -9,7 +9,7 @@
 
 namespace cc {
     enum e_CameraSelection: int {
-        FIRST_CAMERA = -1,
+        FIRST_CAMERA = 0,
     };
 
     struct Settings {

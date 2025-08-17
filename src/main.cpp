@@ -3,12 +3,13 @@
 #include "platform/build_date.h"
 #include "io/jpg.h"
 #include "io/data_location.h"
+#include "types/tooth_measurement.h"
 #include "types/tooth_anomaly.h"
 #include "types/rgb.h"
 #include "types/color_range.h"
 #include "types/resolution.h"
 #include "types/settings.h"
-#include "math/square.h"
+#include "math/statistics.h"
 
 #include <opencv2/opencv.hpp>
 #include <opencv2/imgproc.hpp>
@@ -21,7 +22,6 @@
 #include <numbers>
 #include <algorithm>
 #include <numeric>
-#include <numbers>
 
 #include <execution>
 
@@ -31,7 +31,7 @@
 
 cv::Mat g_foreground;        // BGR
 cv::Mat g_foreground_mask;   // grayscale
-cv::Mat g_webcam_image;      // BGR
+cv::Mat g_source_image;      // BGR
 
 cc::Settings g_Settings;
 
@@ -75,7 +75,7 @@ void save_settings() {
     cfg << g_Settings;
 }
 
-void load_settings(int camera_id = 0) {
+void load_settings(int camera_id = cc::FIRST_CAMERA) {
     // if a resolution was selected before, use that
     if (std::filesystem::exists("count_count.cfg")) {
         std::ifstream cfg("count_count.cfg");
@@ -128,9 +128,9 @@ static void main_window_mouse_event(
     case cv::MouseEventTypes::EVENT_LBUTTONDOWN:
         std::cout << "Clicked at (" << x << ", " << y << ")\n";
 
-        g_Settings.m_ForegroundColor[0] = g_webcam_image.at<cv::Vec3b>(y, x)[0];
-        g_Settings.m_ForegroundColor[1] = g_webcam_image.at<cv::Vec3b>(y, x)[1];
-        g_Settings.m_ForegroundColor[2] = g_webcam_image.at<cv::Vec3b>(y, x)[2];
+        g_Settings.m_ForegroundColor[0] = g_source_image.at<cv::Vec3b>(y, x)[0];
+        g_Settings.m_ForegroundColor[1] = g_source_image.at<cv::Vec3b>(y, x)[1];
+        g_Settings.m_ForegroundColor[2] = g_source_image.at<cv::Vec3b>(y, x)[2];
 
         std::cout << "RGB is #"
             << std::hex
@@ -149,28 +149,36 @@ static void main_window_mouse_event(
 
 void initialize_image_buffers() {
     if (g_foreground.empty())
-        g_foreground.create(g_webcam_image.size(), CV_8UC3);
+        g_foreground.create(g_source_image.size(), CV_8UC3);
     if (g_foreground_mask.empty())
-        g_foreground_mask.create(g_webcam_image.size(), CV_8UC1);
+        g_foreground_mask.create(g_source_image.size(), CV_8UC1);
 }
 
-void determine_foreground(const cc::RGB& selected_color, int tolerance_range) {
+void determine_foreground(
+        const cc::RGB& selected_color,
+        int            tolerance_range,
+        const cv::Mat& source_image,
+              cv::Mat& foreground_mask,
+              cv::Mat& foreground
+) {
+    foreground_mask = cv::Mat::zeros(source_image.size(), CV_8UC1);
+
     auto [min_rgb, max_rgb] = cc::determine_color_range(selected_color, tolerance_range);
     cv::inRange(
-        g_webcam_image,
+        source_image,
         min_rgb,
         max_rgb,
-        g_foreground_mask
+        foreground_mask
     );
 
     // apply slight blur to get rid of noise and small details
-    cv::medianBlur(g_foreground_mask, g_foreground_mask, 9);
+    cv::medianBlur(foreground_mask, foreground_mask, 9);
 
-    g_foreground = cv::Mat::zeros(g_webcam_image.size(), CV_8UC3);
+    foreground = cv::Mat::zeros(source_image.size(), CV_8UC3);
     cv::copyTo(
-        g_webcam_image,
-        g_foreground,
-        g_foreground_mask
+        source_image,
+        foreground,
+        foreground_mask
     );
 }
 
@@ -213,8 +221,63 @@ double arc_length(
     return ending_radians - starting_radians;
 }
 
+std::vector<uint8_t>& find_anomalies(
+    const std::vector<cc::ToothMeasurement>& teeth,
+          std::vector<uint8_t>&              tooth_anomaly_mask
+) {
+    // apply some statistics:
+    // - find the mean distance to the next tooth
+    // - establish variance for both tooth arcs and gaps (unbiased sample variance)
+    // - whenever the measurement exceeds the variance plus tolerance, present a signal
+    std::vector<double> tooth_arc_gaps_to_next;
+    std::vector<double> tooth_arcs;
+
+    for (size_t i = 0; i < teeth.size(); ++i) {
+        const auto &current = teeth[i];
+        const auto &next = teeth[(i + 1) % teeth.size()];;
+
+        tooth_arcs.push_back(
+            arc_length(current.m_StartingAngle, current.m_EndingAngle)
+        );
+
+        tooth_arc_gaps_to_next.push_back(
+            arc_length(current.m_EndingAngle, next.m_StartingAngle)
+        );
+    }
+
+    const double tooth_arc_mean   = cc::math::calculate_mean(tooth_arcs);
+    const double tooth_arc_stddev = cc::math::calculate_standard_deviation(tooth_arcs);
+
+    const double tooth_gap_mean   = cc::math::calculate_mean(tooth_arc_gaps_to_next);
+    const double tooth_gap_stddev = cc::math::calculate_standard_deviation(tooth_arc_gaps_to_next);
+
+    // strong anomalies several times the distance of the stddev from the mean,
+    // weak anomalies between stddev and strong anomaly threshold
+    // regular observations are less than the stddev
+    //
+    // let's focus on finding strong anomalies first
+    const double tooth_gap_anomaly_strong = 3.0 * tooth_gap_stddev;
+    const double tooth_arc_anomaly_strong = 3.0 * tooth_arc_stddev;
+
+    for (size_t i = 0; i < teeth.size(); ++i) {
+        double tooth_gap = tooth_arc_gaps_to_next[i];
+        double tooth_arc = tooth_arcs[i];
+
+        double tooth_arc_anomaly = abs(tooth_arc - tooth_arc_mean);
+        double tooth_gap_anomaly = abs(tooth_gap - tooth_gap_mean);
+
+        if (tooth_gap_anomaly > tooth_gap_anomaly_strong)
+            tooth_anomaly_mask[i] |= cc::gap;
+
+        if (tooth_arc_anomaly > tooth_arc_anomaly_strong)
+            tooth_anomaly_mask[i] |= cc::arc;
+    }
+
+    return tooth_anomaly_mask;
+}
+
 int main(int, char* argv[]) {
-    constexpr static const bool use_live_video = true;
+    constexpr static const bool use_live_video = false;
 
     namespace fs = std::filesystem;
 
@@ -264,13 +327,13 @@ int main(int, char* argv[]) {
         while (!done) {
             // ----- video input -----
             if constexpr(use_live_video) {
-                webcam >> g_webcam_image; // live video
+                webcam >> g_source_image; // live video
             }
             else {
-                g_webcam_image = static_image.clone(); // single image
+                g_source_image = static_image.clone(); // single image
             }
 
-            if (g_webcam_image.empty()) {
+            if (g_source_image.empty()) {
                 std::cerr << "Failed to retrieve image from webcam; exiting application\n";
                 break;
             }
@@ -281,7 +344,10 @@ int main(int, char* argv[]) {
             // ----- video processing -----
             determine_foreground(
                 g_Settings.m_ForegroundColor,
-                g_Settings.m_ForegroundColorTolerance
+                g_Settings.m_ForegroundColorTolerance,
+                g_source_image,
+                g_foreground_mask,
+                g_foreground
             );
 
             std::vector<std::vector<cv::Point>> contours;
@@ -315,7 +381,7 @@ int main(int, char* argv[]) {
                 }
 
                 cv::drawContours(
-                    g_webcam_image,
+                    g_source_image,
                     contours,
                     largest_component_idx,
                     cv::Scalar(0, 0, 255),
@@ -368,19 +434,7 @@ int main(int, char* argv[]) {
                 // -- also figure out some tooth measurements
                 int tooth_count = 0;
 
-                struct ToothMeasurement {
-                    double m_MinDistance =  std::numeric_limits<double>::max();
-                    double m_MaxDistance = -std::numeric_limits<double>::max();;
-                    double m_StartingAngle;
-                    double m_EndingAngle;
-
-                    size_t m_StartMaskIdx;
-                    size_t m_EndMaskIdx;
-
-                    size_t m_ToothIdx;
-                };
-
-                std::vector<ToothMeasurement> teeth;
+                std::vector<cc::ToothMeasurement> teeth;
 
                 // find the first (low) position where the mask changes from low to high
                 auto find_tooth_start = [](const auto& mask) -> std::optional<size_t> {
@@ -414,7 +468,7 @@ int main(int, char* argv[]) {
                     if (!current_mask_value && next_mask_value) {
                         ++tooth_count;
 
-                        ToothMeasurement new_measurement;
+                        cc::ToothMeasurement new_measurement;
                         new_measurement.m_StartMaskIdx  = i % (tooth_mask.size() - 1);
                         new_measurement.m_ToothIdx      = tooth_count;
                         new_measurement.m_StartingAngle = std::atan2f(
@@ -422,7 +476,7 @@ int main(int, char* argv[]) {
                             largest_contour[new_measurement.m_StartMaskIdx].x - centroid_f.x
                         );
 
-                        teeth.push_back(std::move(new_measurement));
+                        teeth.push_back(new_measurement);
                     }
 
                     if (current_mask_value && !next_mask_value) {
@@ -453,76 +507,7 @@ int main(int, char* argv[]) {
                 if (tooth_count >= k_MinimumToothCount) {
                     auto tooth_anomaly_mask = cc::create_anomaly_mask(teeth.size());
 
-                    {
-                        // apply some statistics:
-                        // - find the mean distance to the next tooth
-                        // - establish variance for both tooth arcs and gaps (unbiased sample variance)
-                        // - whenever the measurement exceeds the variance plus tolerance, present a signal
-                        std::vector<double> tooth_arc_gaps_to_next;
-                        std::vector<double> tooth_arcs;
-
-                        for (size_t i = 0; i < teeth.size(); ++i) {
-                            const auto &current = teeth[i];
-                            const auto &next = teeth[(i + 1) % teeth.size()];;
-
-                            tooth_arcs.push_back(
-                                arc_length(current.m_StartingAngle, current.m_EndingAngle)
-                            );
-
-                            tooth_arc_gaps_to_next.push_back(
-                                arc_length(current.m_EndingAngle, next.m_StartingAngle)
-                            );
-                        }
-
-                        auto calculate_mean = [](const std::vector<double> &values) {
-                            return std::accumulate(
-                                std::begin(values),
-                                std::end(values),
-                                0.0
-                            ) / values.size();
-                        };
-
-                        auto calculate_variance = [](const std::vector<double> &values, double mean) {
-                            return std::accumulate(
-                                std::begin(values),
-                                std::end(values),
-                                0.0,
-                                [mean](double acc, const auto &value) {
-                                    return acc + cc::square(value - mean);
-                                }
-                            ) / values.size();;
-                        };
-
-                        const double tooth_arc_mean = calculate_mean(tooth_arcs);
-                        const double tooth_arc_variance = calculate_variance(tooth_arcs, tooth_arc_mean);
-                        const double tooth_arc_stddev = std::sqrt(tooth_arc_variance);
-
-                        const double tooth_gap_mean = calculate_mean(tooth_arc_gaps_to_next);
-                        const double tooth_gap_variance = calculate_variance(tooth_arc_gaps_to_next, tooth_gap_mean);
-                        const double tooth_gap_stddev = std::sqrt(tooth_gap_variance);
-
-                        // strong anomalies several times the distance of the stddev from the mean,
-                        // weak anomalies between stddev and strong anomaly threshold
-                        // regular observations are less than the stddev
-                        //
-                        // let's focus on finding strong anomalies first
-                        const double tooth_gap_anomaly_strong = 3.0 * tooth_gap_stddev;
-                        const double tooth_arc_anomaly_strong = 3.0 * tooth_arc_stddev;
-
-                        for (size_t i = 0; i < teeth.size(); ++i) {
-                            double tooth_gap = tooth_arc_gaps_to_next[i];
-                            double tooth_arc = tooth_arcs[i];
-
-                            double tooth_arc_anomaly = std::abs(tooth_arc - tooth_arc_mean);
-                            double tooth_gap_anomaly = std::abs(tooth_gap - tooth_gap_mean);
-
-                            if (tooth_gap_anomaly > tooth_gap_anomaly_strong)
-                                tooth_anomaly_mask[i] |= cc::ToothAnomaly::gap;
-
-                            if (tooth_arc_anomaly > tooth_arc_anomaly_strong)
-                                tooth_anomaly_mask[i] |= cc::ToothAnomaly::arc;
-                        }
-                    }
+                    tooth_anomaly_mask = find_anomalies(teeth, tooth_anomaly_mask);
 
                     // visualize anomalies using a simple line from the center towards the tooth
                     {
@@ -554,15 +539,14 @@ int main(int, char* argv[]) {
                                 gear_center.y + 0.9 * gear_radius * std::sin(angle + std::numbers::pi / 40.0)
                             );
 
-                            cv::line(g_webcam_image, from, to, color, thickness);
-                            cv::line(g_webcam_image, left, to, color, thickness);
-                            cv::line(g_webcam_image, right, to, color, thickness);
+                            cv::line(g_source_image, from, to, color, thickness);
+                            cv::line(g_source_image, left, to, color, thickness);
+                            cv::line(g_source_image, right, to, color, thickness);
                         };
 
                         for (size_t i = 0; i < teeth.size(); ++i) {
-                            const auto &measurement = teeth[i];
-                            //const auto& next_measurement  = teeth[(i + 1) % teeth.size()];;
-                            const auto &anomaly_detection = tooth_anomaly_mask[i];
+                            const auto& measurement       = teeth[i];
+                            const auto& anomaly_detection = tooth_anomaly_mask[i];
 
                             if (anomaly_detection & cc::ToothAnomaly::arc) {
                                 draw_arrow(
@@ -577,13 +561,13 @@ int main(int, char* argv[]) {
 
                     // and display the result in-image at the center of the gear
                     {
-                        constexpr int k_FontFace = cv::FONT_HERSHEY_SIMPLEX;
-                        constexpr double k_FontScale = 1.0;
-                        constexpr int k_FontThickness = 3;
-                        const cv::Scalar k_TextColor = cv::Scalar(255, 255, 255);
-                        const cv::Scalar k_TextBgColor = cv::Scalar(0, 0, 0);
-                        constexpr int k_LineThickness = 2;
-                        constexpr int k_LineType = cv::LINE_AA;
+                        constexpr int    k_FontFace      = cv::FONT_HERSHEY_SIMPLEX;
+                        constexpr double k_FontScale     = 1.0;
+                        constexpr int    k_FontThickness = 3;
+                        const cv::Scalar k_TextColor     = cv::Scalar(255, 255, 255);
+                        const cv::Scalar k_TextBgColor   = cv::Scalar(0, 0, 0);
+                        constexpr int    k_LineThickness = 2;
+                        constexpr int    k_LineType      = cv::LINE_AA;
 
                         auto tooth_count_half_str = std::to_string(tooth_count);
 
@@ -597,27 +581,27 @@ int main(int, char* argv[]) {
 
                         // simple shadow
                         cv::putText(
-                            g_webcam_image,
-                            tooth_count_half_str,
+                                g_source_image,
+                                tooth_count_half_str,
                             centroid_i - cv::Point2i(text_size.width / 2, text_size.height / 2) + cv::Point2i(2, 2),
-                            k_FontFace,
-                            k_FontScale,
-                            k_TextBgColor,
-                            k_LineThickness,
-                            k_LineType,
-                            false       // when drawing in an image with bottom left origin, this should be true
+                                k_FontFace,
+                                k_FontScale,
+                                k_TextBgColor,
+                                k_LineThickness,
+                                k_LineType,
+                                false       // when drawing in an image with bottom left origin, this should be true
                         );
 
                         cv::putText(
-                            g_webcam_image,
-                            tooth_count_half_str,
+                                g_source_image,
+                                tooth_count_half_str,
                             centroid_i - cv::Point2i(text_size.width / 2, text_size.height / 2),
-                            k_FontFace,
-                            k_FontScale,
-                            k_TextColor,
-                            k_LineThickness,
-                            k_LineType,
-                            false       // when drawing in an image with bottom left origin, this should be true
+                                k_FontFace,
+                                k_FontScale,
+                                k_TextColor,
+                                k_LineThickness,
+                                k_LineType,
+                                false       // when drawing in an image with bottom left origin, this should be true
                         );
                     }
                 }
@@ -625,7 +609,7 @@ int main(int, char* argv[]) {
 
             // ----- rendering -----
             switch (show) {
-            case 0: cv::imshow(main_window, g_webcam_image); break;
+            case 0: cv::imshow(main_window, g_source_image); break;
             case 1: cv::imshow(main_window, g_foreground);   break;
             }
 
@@ -644,7 +628,7 @@ int main(int, char* argv[]) {
 
                 case 'g':
                 case 'G':
-                    save_image(g_webcam_image);
+                    save_image(g_source_image);
                     break;
 
                 case 32: // space bar
@@ -660,6 +644,10 @@ int main(int, char* argv[]) {
                 std::cout << "Pressed: " << key << '\n';
                 break;
             }
+
+            // if the window closed, we're done
+            if (cv::getWindowProperty(main_window, cv::WND_PROP_VISIBLE) < 1)
+                done = true;
         }
     }
 
