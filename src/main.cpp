@@ -10,6 +10,13 @@
 #include "types/resolution.h"
 #include "types/settings.h"
 #include "math/statistics.h"
+#include "math/angles.h"
+#include "gui/visualization.h"
+#include "processing/foreground.h"
+#include "processing/centroid.h"
+#include "processing/count_teeth.h"
+#include "processing/anomalies.h"
+#include "processing/contours.h"
 
 #include <opencv2/opencv.hpp>
 #include <opencv2/imgproc.hpp>
@@ -153,244 +160,6 @@ void initialize_image_buffers() {
         g_foreground_mask.create(g_source_image.size(), CV_8UC1);
 }
 
-void determine_foreground(
-        const cc::RGB& selected_color,
-        int            tolerance_range,
-        const cv::Mat& source_image,
-              cv::Mat& foreground_mask,
-              cv::Mat& foreground
-) {
-    foreground_mask = cv::Mat::zeros(source_image.size(), CV_8UC1);
-
-    auto [min_rgb, max_rgb] = cc::determine_color_range(selected_color, tolerance_range);
-    cv::inRange(
-        source_image,
-        min_rgb,
-        max_rgb,
-        foreground_mask
-    );
-
-    // apply slight blur to get rid of noise and small details
-    cv::medianBlur(foreground_mask, foreground_mask, 9);
-
-    foreground = cv::Mat::zeros(source_image.size(), CV_8UC3);
-    cv::copyTo(
-        source_image,
-        foreground,
-        foreground_mask
-    );
-}
-
-std::tuple<cv::Point2d, cv::Point2f, cv::Point2i> find_centroid(
-    const std::vector<std::vector<cv::Point>>& contours,
-    int                                        largest_component_idx
-) {
-    // https://docs.opencv.org/3.4/d3/dc0/group__imgproc__shape.html#ga556a180f43cab22649c23ada36a8a139
-    auto moment = cv::moments(
-        contours[largest_component_idx],
-        false
-    );
-    auto centroid_d = cv::Point2d(
-        moment.m10 / moment.m00,
-        moment.m01 / moment.m00
-    );
-
-    auto centroid_f = cv::Point2f(
-        static_cast<float>(centroid_d.x),
-        static_cast<float>(centroid_d.y)
-    );
-
-    auto centroid_i = cv::Point2i(
-        static_cast<int>(centroid_d.x),
-        static_cast<int>(centroid_d.y)
-    );
-
-    return std::make_tuple(
-        centroid_d,
-        centroid_f,
-        centroid_i
-    );
-}
-
-double arc_length(
-    double starting_radians,
-    double ending_radians
-) {
-    while (starting_radians > ending_radians)
-        ending_radians += 2.0 * std::numbers::pi;
-
-    return ending_radians - starting_radians;
-}
-
-std::vector<uint8_t>& find_anomalies(
-    const std::vector<cc::ToothMeasurement>& teeth,
-          std::vector<uint8_t>&              tooth_anomaly_mask
-) {
-    // apply some statistics:
-    // - find the mean distance to the next tooth
-    // - establish variance for both tooth arcs and gaps (unbiased sample variance)
-    // - whenever the measurement exceeds the variance plus tolerance, present a signal
-    std::vector<double> tooth_arc_gaps_to_next;
-    std::vector<double> tooth_arcs;
-
-    for (size_t i = 0; i < teeth.size(); ++i) {
-        const auto &current = teeth[i];
-        const auto &next = teeth[(i + 1) % teeth.size()];;
-
-        tooth_arcs.push_back(
-            arc_length(current.m_StartingAngle, current.m_EndingAngle)
-        );
-
-        tooth_arc_gaps_to_next.push_back(
-            arc_length(current.m_EndingAngle, next.m_StartingAngle)
-        );
-    }
-
-    const double tooth_arc_mean   = cc::math::calculate_mean(tooth_arcs);
-    const double tooth_arc_stddev = cc::math::calculate_standard_deviation(tooth_arcs);
-
-    const double tooth_gap_mean   = cc::math::calculate_mean(tooth_arc_gaps_to_next);
-    const double tooth_gap_stddev = cc::math::calculate_standard_deviation(tooth_arc_gaps_to_next);
-
-    // strong anomalies several times the distance of the stddev from the mean,
-    // weak anomalies between stddev and strong anomaly threshold
-    // regular observations are less than the stddev
-    //
-    // let's focus on finding strong anomalies first
-    const double tooth_gap_anomaly_strong = 3.0 * tooth_gap_stddev;
-    const double tooth_arc_anomaly_strong = 3.0 * tooth_arc_stddev;
-
-    for (size_t i = 0; i < teeth.size(); ++i) {
-        double tooth_gap = tooth_arc_gaps_to_next[i];
-        double tooth_arc = tooth_arcs[i];
-
-        double tooth_arc_anomaly = abs(tooth_arc - tooth_arc_mean);
-        double tooth_gap_anomaly = abs(tooth_gap - tooth_gap_mean);
-
-        if (tooth_gap_anomaly > tooth_gap_anomaly_strong)
-            tooth_anomaly_mask[i] |= cc::gap;
-
-        if (tooth_arc_anomaly > tooth_arc_anomaly_strong)
-            tooth_anomaly_mask[i] |= cc::arc;
-    }
-
-    return tooth_anomaly_mask;
-}
-
-void draw_gear_arrow(
-          cv::Mat&     output_image,
-    const cv::Point2d& gear_center,
-    double             gear_radius,
-    double             angle,
-    const cv::Scalar&  color     = cv::Scalar(255, 255, 127),
-    int                thickness = 3
-) {
-    // determine intersection from the center with the circle at radius
-    cv::Point2d to(
-        gear_center.x + 0.95 * gear_radius * std::cos(angle),
-        gear_center.y + 0.95 * gear_radius * std::sin(angle)
-    );
-
-    cv::Point2d from(
-        gear_center.x + 0.5 * gear_radius * std::cos(angle),
-        gear_center.y + 0.5 * gear_radius * std::sin(angle)
-    );
-
-    cv::Point2d left(
-        gear_center.x + 0.9 * gear_radius * std::cos(angle - std::numbers::pi / 40.0),
-        gear_center.y + 0.9 * gear_radius * std::sin(angle - std::numbers::pi / 40.0)
-    );
-
-    cv::Point2d right(
-        gear_center.x + 0.9 * gear_radius * std::cos(angle + std::numbers::pi / 40.0),
-        gear_center.y + 0.9 * gear_radius * std::sin(angle + std::numbers::pi / 40.0)
-    );
-
-    cv::line(output_image, from,  to, color, thickness);
-    cv::line(output_image, left,  to, color, thickness);
-    cv::line(output_image, right, to, color, thickness);
-}
-
-void display_results(
-    size_t                                   tooth_count,
-    cv::Point2i                              centroid_i,
-    const std::vector<cc::ToothMeasurement>& teeth,
-    const std::vector<uint8_t>&              tooth_anomaly_mask,
-    cv::Mat&                                 output_image
-) {
-    constexpr int    k_FontFace      = cv::FONT_HERSHEY_SIMPLEX;
-    constexpr double k_FontScale     = 1.0;
-    constexpr int    k_FontThickness = 3;
-    const cv::Scalar k_TextColor     = cv::Scalar(255, 255, 255);
-    const cv::Scalar k_TextBgColor   = cv::Scalar(0, 0, 0);
-    constexpr int    k_LineThickness = 2;
-    constexpr int    k_LineType      = cv::LINE_AA;
-
-    auto tooth_count_half_str = std::to_string(tooth_count);
-
-    // draw the center
-    cv::circle(
-        output_image,               // dst
-        centroid_i,                 // center
-        8,                          // radius
-        cv::Scalar(255, 255, 255),  // color
-        -1,                         // thickness (-1 for fill)
-        8,                          // line type
-        0                           // shift
-    );
-
-    // visualize anomalies using a simple line from the center towards the tooth
-    {
-        for (size_t i = 0; i < teeth.size(); ++i) {
-            const auto& measurement       = teeth[i];
-            const auto& anomaly_detection = tooth_anomaly_mask[i];
-
-            if (anomaly_detection & cc::ToothAnomaly::arc) {
-                draw_gear_arrow(
-                    output_image,
-                    centroid_i,
-                    measurement.m_MinDistance,
-                    (measurement.m_EndingAngle + measurement.m_StartingAngle) / 2.0,
-                    cv::Scalar(255, 255, 127)
-                );
-            }
-        }
-    }
-
-    auto text_size = cv::getTextSize(
-        tooth_count_half_str,
-        k_FontFace,
-        k_FontScale,
-        k_FontThickness,
-        nullptr
-    );
-
-    // simple shadow
-    cv::putText(
-        output_image,
-        tooth_count_half_str,
-        centroid_i - cv::Point2i(text_size.width / 2, text_size.height / 2) + cv::Point2i(2, 2),
-        k_FontFace,
-        k_FontScale,
-        k_TextBgColor,
-        k_LineThickness,
-        k_LineType,
-        false       // when drawing in an image with bottom left origin, this should be true
-    );
-
-    cv::putText(
-        output_image,
-        tooth_count_half_str,
-        centroid_i - cv::Point2i(text_size.width / 2, text_size.height / 2),
-        k_FontFace,
-        k_FontScale,
-        k_TextColor,
-        k_LineThickness,
-        k_LineType,
-        false       // when drawing in an image with bottom left origin, this should be true
-    );
-}
-
 int main(int, char* argv[]) {
     bool use_live_video = false;
 
@@ -459,7 +228,7 @@ int main(int, char* argv[]) {
             output_image = g_source_image.clone();
 
             // ----- video processing -----
-            determine_foreground(
+            cc::processing::determine_foreground(
                 g_Settings.m_ForegroundColor,
                 g_Settings.m_ForegroundColorTolerance,
                 g_source_image,
@@ -480,149 +249,28 @@ int main(int, char* argv[]) {
             );
 
             if (!contours.empty()) {
-                int    idx                   = 0;
-                int    largest_component_idx = 0;
-                double max_area              = 0;
-
-                // loop through the top-level contours (the iteration sequence is described in the hierarchy vector
-                // and terminates with a negative value) and find the biggest one.
-                for (; idx >= 0; idx = hierarchy[idx][0]) {
-                    const auto& cont = contours[idx];
-
-                    double area = std::fabs(cv::contourArea(cv::Mat(cont)));
-
-                    if (area > max_area) {
-                        max_area = area;
-                        largest_component_idx = idx;
-                    }
-                }
-
-                cv::drawContours(
-                    output_image,
+                auto maybe_result =  cc::processing::process_contours(
                     contours,
-                    largest_component_idx,
-                    cv::Scalar(0, 0, 255),
-                    1, // thickness, or cv::FILLED to fill the entire thing
-                    cv::LINE_8,
-                    hierarchy
+                    hierarchy,
+                    output_image
                 );
 
-                // find centroid of the contour
-                auto [centroid_d, centroid_f, centroid_i] = find_centroid(
-                    contours,
-                    largest_component_idx
-                );
+                if (maybe_result) {
+                    auto [tooth_count, teeth, centroid_i] = *maybe_result;
 
-                const auto& largest_contour = contours[largest_component_idx];
+                    // early exit -- if we have found less than 8 teeth, it's probably not a gear that we found
+                    if (tooth_count >= k_MinimumToothCount) {
+                        auto tooth_anomaly_mask = cc::processing::find_anomalies(teeth);
 
-                // loop over the largest contour, collect 'similar' distances to the center point
-                std::vector<double> distances;
-                for (const auto& pt : largest_contour) {
-                    auto distance = std::hypot(
-                        pt.x - centroid_i.x,
-                        pt.y - centroid_i.y
-                    );
-
-                    distances.push_back(distance);
-                }
-
-                // find the largest and smallest distances to the center, use half that as a threshold
-                auto min_max            = std::minmax_element(distances.begin(), distances.end());
-                auto distance_threshold = (*min_max.first + *min_max.second) / 2.0;
-
-                std::vector<uint8_t> tooth_mask(largest_contour.size(), 0);
-
-                for (size_t i = 0; i < largest_contour.size(); ++i)
-                    tooth_mask[i] = (distances[i] < distance_threshold) ? 1 : 0;
-
-                // Here we figure out how often the threshold is crossed to determine a tooth count
-                // -- only count the 'rising' edges to establish a count
-                // -- also figure out some tooth measurements
-                int tooth_count = 0;
-
-                std::vector<cc::ToothMeasurement> teeth;
-
-                // find the first (low) position where the mask changes from low to high
-                auto find_tooth_start = [](const auto& mask) -> std::optional<size_t> {
-                    if (mask.empty())
-                        return std::nullopt;
-
-                    for (size_t i = 0; i < mask.size(); ++i)
-                        if (!mask[i] && mask[(i + 1) % mask.size()])
-                            return i;
-
-                    // super edge case where there is just one change, and it's right at the end of the list
-                    if (!mask.back() && mask.front())
-                        return mask.size() - 1;
-
-                    return std::nullopt;
-                };
-
-                auto first_tooth = find_tooth_start(tooth_mask);
-                if (!first_tooth)
-                    continue;
-
-                size_t starting_idx = *first_tooth;
-
-                // from the first position, iterate over the entire set and collect measurements during traversal
-                for (size_t i = starting_idx; i < starting_idx + tooth_mask.size(); ++i) {
-                    uint8_t current_mask_value = tooth_mask[i % tooth_mask.size()];
-                    uint8_t next_mask_value    = tooth_mask[(i + 1) % tooth_mask.size()];
-
-                    // count rising edges as the start of a tooth
-                    // the algorithm starts at a position where this is the case
-                    if (!current_mask_value && next_mask_value) {
-                        ++tooth_count;
-
-                        cc::ToothMeasurement new_measurement;
-                        new_measurement.m_StartMaskIdx  = i % (tooth_mask.size() - 1);
-                        new_measurement.m_ToothIdx      = tooth_count;
-                        new_measurement.m_StartingAngle = std::atan2f(
-                            largest_contour[new_measurement.m_StartMaskIdx].y - centroid_f.y,
-                            largest_contour[new_measurement.m_StartMaskIdx].x - centroid_f.x
+                        // and display the result in-image at the center of the gear
+                        display_results(
+                            tooth_count,
+                            centroid_i,
+                            teeth,
+                            tooth_anomaly_mask,
+                            output_image
                         );
-
-                        teeth.push_back(new_measurement);
                     }
-
-                    if (current_mask_value && !next_mask_value) {
-                        // complete measurements from the last measurement
-                        auto& measurement = teeth.back();
-
-                        measurement.m_EndMaskIdx = i % (tooth_mask.size() - 1);
-                        measurement.m_EndingAngle = std::atan2f(
-                            largest_contour[measurement.m_EndMaskIdx].y - centroid_f.y,
-                            largest_contour[measurement.m_EndMaskIdx].x - centroid_f.x
-                        );
-
-                        // because of the wrapping structure, this is actually challenging for std::minmax_element...
-                        measurement.m_MinDistance = std::numeric_limits<double>::max();
-                        measurement.m_MaxDistance = -std::numeric_limits<double>::max();
-
-                        for (size_t j = measurement.m_StartMaskIdx; j <= measurement.m_EndMaskIdx; ++j, j %= tooth_mask.size()) {
-                            if (distances[j] < measurement.m_MinDistance)
-                                measurement.m_MinDistance = distances[j];
-
-                            if (distances[j] > measurement.m_MaxDistance)
-                                measurement.m_MaxDistance = distances[j];
-                        }
-                    }
-                }
-
-                // early exit -- if we have found less than 8 teeth, it's probably not a gear that we found
-                if (tooth_count >= k_MinimumToothCount) {
-                    auto tooth_anomaly_mask = cc::create_anomaly_mask(teeth.size());
-
-                    tooth_anomaly_mask = find_anomalies(teeth, tooth_anomaly_mask);
-
-                    // and display the result in-image at the center of the gear
-                    display_results(
-                        tooth_count,
-                        centroid_i,
-                        teeth,
-                        tooth_anomaly_mask,
-                        output_image
-                    );
                 }
             }
 
