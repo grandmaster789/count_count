@@ -3,7 +3,7 @@
 
 #if CVC_PLATFORM == CVC_PLATFORM_WINDOWS
 
-namespace cvc::gui {
+namespace cc::gui {
 
 }
 

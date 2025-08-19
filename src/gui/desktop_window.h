@@ -5,7 +5,7 @@
 #include <memory>
 #include <functional>
 
-namespace cvc::gui {
+namespace cc::gui {
     struct Position {
         int m_X = 0;
         int m_Y = 0;

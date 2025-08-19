@@ -5,7 +5,7 @@
 #include <cstdio>
 #include <filesystem>
 
-namespace cvc::util {
+namespace cc::util {
     using UniqueFile = std::unique_ptr<FILE, decltype(&std::fclose)>; // decltype(&std::fclose) == int(*)(FILE*)
 
     /*

@@ -2,7 +2,7 @@
 
 #include <ostream>
 
-namespace cvc::gui {
+namespace cc::gui {
     std::ostream& operator << (std::ostream& os, const Position& p) {
         os << '(' << p.m_X << ", " << p.m_Y << ')';
         return os;

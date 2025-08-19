@@ -4,7 +4,7 @@
 #include <chrono>
 
 // uses the __DATE__ macro to determine when this project was built
-namespace cvc {
+namespace cc {
     constexpr std::chrono::system_clock::time_point get_build_date();
     inline    int                                   get_days_since_build();
 }

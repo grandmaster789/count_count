@@ -29,15 +29,14 @@
     #error "Currently only Windows is supported"
 #endif
 
-cv::Mat g_foreground;        // BGR
-cv::Mat g_foreground_mask;   // grayscale
-cv::Mat g_source_image;      // BGR
+cv::Mat g_foreground;      // BGR
+cv::Mat g_foreground_mask; // grayscale
+cv::Mat g_source_image;    // BGR
 
 cc::Settings g_Settings;
 
 static constexpr const size_t k_MinimumToothCount = 8;
 
-//
 void save_image(const cv::Mat& img) {
     using cc::io::save_jpg;
 
@@ -182,10 +181,9 @@ void determine_foreground(
     );
 }
 
-cv::Point_<double> find_centroid(
+std::tuple<cv::Point2d, cv::Point2f, cv::Point2i> find_centroid(
     const std::vector<std::vector<cv::Point>>& contours,
-    int                                        largest_component_idx,
-    bool                                       do_visualization = false
+    int                                        largest_component_idx
 ) {
     // https://docs.opencv.org/3.4/d3/dc0/group__imgproc__shape.html#ga556a180f43cab22649c23ada36a8a139
     auto moment = cv::moments(
@@ -197,18 +195,21 @@ cv::Point_<double> find_centroid(
         moment.m01 / moment.m00
     );
 
-    if (do_visualization)
-        cv::circle(
-            g_foreground,               // dst
-            centroid_d,                 // center
-            8,                          // radius
-            cv::Scalar(255, 255, 255),  // color
-            -1,                         // thickness (-1 for fill)
-            8,                          // line type
-            0                           // shift
-        );
+    auto centroid_f = cv::Point2f(
+        static_cast<float>(centroid_d.x),
+        static_cast<float>(centroid_d.y)
+    );
 
-    return centroid_d;
+    auto centroid_i = cv::Point2i(
+        static_cast<int>(centroid_d.x),
+        static_cast<int>(centroid_d.y)
+    );
+
+    return std::make_tuple(
+        centroid_d,
+        centroid_f,
+        centroid_i
+    );
 }
 
 double arc_length(
@@ -276,14 +277,128 @@ std::vector<uint8_t>& find_anomalies(
     return tooth_anomaly_mask;
 }
 
+void draw_gear_arrow(
+          cv::Mat&     output_image,
+    const cv::Point2d& gear_center,
+    double             gear_radius,
+    double             angle,
+    const cv::Scalar&  color     = cv::Scalar(255, 255, 127),
+    int                thickness = 3
+) {
+    // determine intersection from the center with the circle at radius
+    cv::Point2d to(
+        gear_center.x + 0.95 * gear_radius * std::cos(angle),
+        gear_center.y + 0.95 * gear_radius * std::sin(angle)
+    );
+
+    cv::Point2d from(
+        gear_center.x + 0.5 * gear_radius * std::cos(angle),
+        gear_center.y + 0.5 * gear_radius * std::sin(angle)
+    );
+
+    cv::Point2d left(
+        gear_center.x + 0.9 * gear_radius * std::cos(angle - std::numbers::pi / 40.0),
+        gear_center.y + 0.9 * gear_radius * std::sin(angle - std::numbers::pi / 40.0)
+    );
+
+    cv::Point2d right(
+        gear_center.x + 0.9 * gear_radius * std::cos(angle + std::numbers::pi / 40.0),
+        gear_center.y + 0.9 * gear_radius * std::sin(angle + std::numbers::pi / 40.0)
+    );
+
+    cv::line(output_image, from,  to, color, thickness);
+    cv::line(output_image, left,  to, color, thickness);
+    cv::line(output_image, right, to, color, thickness);
+}
+
+void display_results(
+    size_t                                   tooth_count,
+    cv::Point2i                              centroid_i,
+    const std::vector<cc::ToothMeasurement>& teeth,
+    const std::vector<uint8_t>&              tooth_anomaly_mask,
+    cv::Mat&                                 output_image
+) {
+    constexpr int    k_FontFace      = cv::FONT_HERSHEY_SIMPLEX;
+    constexpr double k_FontScale     = 1.0;
+    constexpr int    k_FontThickness = 3;
+    const cv::Scalar k_TextColor     = cv::Scalar(255, 255, 255);
+    const cv::Scalar k_TextBgColor   = cv::Scalar(0, 0, 0);
+    constexpr int    k_LineThickness = 2;
+    constexpr int    k_LineType      = cv::LINE_AA;
+
+    auto tooth_count_half_str = std::to_string(tooth_count);
+
+    // draw the center
+    cv::circle(
+        output_image,               // dst
+        centroid_i,                 // center
+        8,                          // radius
+        cv::Scalar(255, 255, 255),  // color
+        -1,                         // thickness (-1 for fill)
+        8,                          // line type
+        0                           // shift
+    );
+
+    // visualize anomalies using a simple line from the center towards the tooth
+    {
+        for (size_t i = 0; i < teeth.size(); ++i) {
+            const auto& measurement       = teeth[i];
+            const auto& anomaly_detection = tooth_anomaly_mask[i];
+
+            if (anomaly_detection & cc::ToothAnomaly::arc) {
+                draw_gear_arrow(
+                    output_image,
+                    centroid_i,
+                    measurement.m_MinDistance,
+                    (measurement.m_EndingAngle + measurement.m_StartingAngle) / 2.0,
+                    cv::Scalar(255, 255, 127)
+                );
+            }
+        }
+    }
+
+    auto text_size = cv::getTextSize(
+        tooth_count_half_str,
+        k_FontFace,
+        k_FontScale,
+        k_FontThickness,
+        nullptr
+    );
+
+    // simple shadow
+    cv::putText(
+        output_image,
+        tooth_count_half_str,
+        centroid_i - cv::Point2i(text_size.width / 2, text_size.height / 2) + cv::Point2i(2, 2),
+        k_FontFace,
+        k_FontScale,
+        k_TextBgColor,
+        k_LineThickness,
+        k_LineType,
+        false       // when drawing in an image with bottom left origin, this should be true
+    );
+
+    cv::putText(
+        output_image,
+        tooth_count_half_str,
+        centroid_i - cv::Point2i(text_size.width / 2, text_size.height / 2),
+        k_FontFace,
+        k_FontScale,
+        k_TextColor,
+        k_LineThickness,
+        k_LineType,
+        false       // when drawing in an image with bottom left origin, this should be true
+    );
+}
+
 int main(int, char* argv[]) {
-    constexpr static const bool use_live_video = false;
+    bool use_live_video = false;
 
     namespace fs = std::filesystem;
 
     std::cout << "Starting Counting...\n";
-    std::cout << "Running on: " << cvc::ePlatform::current << '\n';
-    std::cout << "Built " << cvc::get_days_since_build() << " days ago\n";
+    std::cout << "Running on: " << cc::ePlatform::current << '\n';
+    std::cout << "Built "       << cc::get_days_since_build() << " days ago\n";
 
     fs::path exe_path(argv[0]);
     auto data_path = cc::find_data_folder(exe_path);
@@ -295,22 +410,12 @@ int main(int, char* argv[]) {
 
         std::cout << "Selected resolution: " << g_Settings.m_SourceResolution << '\n';
 
-        cv::Mat static_image;
+        cv::Mat          static_image;
         cv::VideoCapture webcam;
+        cv::Mat          output_image;
 
-        // for this project, it really doesn't matter all that much which API is used
-        if constexpr (use_live_video) {
-            webcam = cv::VideoCapture(0);
-            if (!webcam.isOpened()) {
-                std::cerr << "Cannot open webcam\n";
-                return -1;
-            }
-            webcam.set(cv::CAP_PROP_FRAME_WIDTH,  g_Settings.m_SourceResolution.m_Width);
-            webcam.set(cv::CAP_PROP_FRAME_HEIGHT, g_Settings.m_SourceResolution.m_Height);
-        }
-        else {
+        if (!use_live_video)
             static_image = cc::io::load_jpg((data_path / "test_broken_tooth_002.jpg"));
-        }
 
         SensitivityBarHandler trackbar_handler;
 
@@ -326,12 +431,23 @@ int main(int, char* argv[]) {
         bool done = false;
         while (!done) {
             // ----- video input -----
-            if constexpr(use_live_video) {
+            if (use_live_video) {
+                if (!webcam.isOpened()) {
+                    webcam = cv::VideoCapture(0);
+
+                    if (!webcam.isOpened()) {
+                        std::cerr << "Cannot open webcam\n";
+                        return -1;
+                    }
+
+                    webcam.set(cv::CAP_PROP_FRAME_WIDTH,  g_Settings.m_SourceResolution.m_Width);
+                    webcam.set(cv::CAP_PROP_FRAME_HEIGHT, g_Settings.m_SourceResolution.m_Height);
+                }
+
                 webcam >> g_source_image; // live video
             }
-            else {
+            else
                 g_source_image = static_image.clone(); // single image
-            }
 
             if (g_source_image.empty()) {
                 std::cerr << "Failed to retrieve image from webcam; exiting application\n";
@@ -340,6 +456,7 @@ int main(int, char* argv[]) {
 
             // if the other images haven't been initialized yet, do so now
             initialize_image_buffers();
+            output_image = g_source_image.clone();
 
             // ----- video processing -----
             determine_foreground(
@@ -381,7 +498,7 @@ int main(int, char* argv[]) {
                 }
 
                 cv::drawContours(
-                    g_source_image,
+                    output_image,
                     contours,
                     largest_component_idx,
                     cv::Scalar(0, 0, 255),
@@ -391,20 +508,9 @@ int main(int, char* argv[]) {
                 );
 
                 // find centroid of the contour
-                auto centroid_d = find_centroid(
+                auto [centroid_d, centroid_f, centroid_i] = find_centroid(
                     contours,
-                    largest_component_idx,
-                    true
-                );
-
-                auto centroid_f = cv::Point2f(
-                    static_cast<float>(centroid_d.x),
-                    static_cast<float>(centroid_d.y)
-                );
-
-                auto centroid_i = cv::Point2i(
-                    static_cast<int>(centroid_d.x),
-                    static_cast<int>(centroid_d.y)
+                    largest_component_idx
                 );
 
                 const auto& largest_contour = contours[largest_component_idx];
@@ -509,108 +615,21 @@ int main(int, char* argv[]) {
 
                     tooth_anomaly_mask = find_anomalies(teeth, tooth_anomaly_mask);
 
-                    // visualize anomalies using a simple line from the center towards the tooth
-                    {
-                        auto draw_arrow = [](
-                            const cv::Point2d &gear_center,
-                            double gear_radius,
-                            double angle,
-                            const cv::Scalar &color = cv::Scalar(255, 255, 127),
-                            int thickness = 3
-                        ) {
-                            // determine intersection from the center with the circle at radius
-                            cv::Point2d to(
-                                gear_center.x + 0.95 * gear_radius * std::cos(angle),
-                                gear_center.y + 0.95 * gear_radius * std::sin(angle)
-                            );
-
-                            cv::Point2d from(
-                                gear_center.x + 0.5 * gear_radius * std::cos(angle),
-                                gear_center.y + 0.5 * gear_radius * std::sin(angle)
-                            );
-
-                            cv::Point2d left(
-                                gear_center.x + 0.9 * gear_radius * std::cos(angle - std::numbers::pi / 40.0),
-                                gear_center.y + 0.9 * gear_radius * std::sin(angle - std::numbers::pi / 40.0)
-                            );
-
-                            cv::Point2d right(
-                                gear_center.x + 0.9 * gear_radius * std::cos(angle + std::numbers::pi / 40.0),
-                                gear_center.y + 0.9 * gear_radius * std::sin(angle + std::numbers::pi / 40.0)
-                            );
-
-                            cv::line(g_source_image, from, to, color, thickness);
-                            cv::line(g_source_image, left, to, color, thickness);
-                            cv::line(g_source_image, right, to, color, thickness);
-                        };
-
-                        for (size_t i = 0; i < teeth.size(); ++i) {
-                            const auto& measurement       = teeth[i];
-                            const auto& anomaly_detection = tooth_anomaly_mask[i];
-
-                            if (anomaly_detection & cc::ToothAnomaly::arc) {
-                                draw_arrow(
-                                    centroid_d,
-                                    measurement.m_MinDistance,
-                                    (measurement.m_EndingAngle + measurement.m_StartingAngle) / 2.0,
-                                    cv::Scalar(255, 255, 127)
-                                );
-                            }
-                        }
-                    }
-
                     // and display the result in-image at the center of the gear
-                    {
-                        constexpr int    k_FontFace      = cv::FONT_HERSHEY_SIMPLEX;
-                        constexpr double k_FontScale     = 1.0;
-                        constexpr int    k_FontThickness = 3;
-                        const cv::Scalar k_TextColor     = cv::Scalar(255, 255, 255);
-                        const cv::Scalar k_TextBgColor   = cv::Scalar(0, 0, 0);
-                        constexpr int    k_LineThickness = 2;
-                        constexpr int    k_LineType      = cv::LINE_AA;
-
-                        auto tooth_count_half_str = std::to_string(tooth_count);
-
-                        auto text_size = cv::getTextSize(
-                            tooth_count_half_str,
-                            k_FontFace,
-                            k_FontScale,
-                            k_FontThickness,
-                            nullptr
-                        );
-
-                        // simple shadow
-                        cv::putText(
-                                g_source_image,
-                                tooth_count_half_str,
-                            centroid_i - cv::Point2i(text_size.width / 2, text_size.height / 2) + cv::Point2i(2, 2),
-                                k_FontFace,
-                                k_FontScale,
-                                k_TextBgColor,
-                                k_LineThickness,
-                                k_LineType,
-                                false       // when drawing in an image with bottom left origin, this should be true
-                        );
-
-                        cv::putText(
-                                g_source_image,
-                                tooth_count_half_str,
-                            centroid_i - cv::Point2i(text_size.width / 2, text_size.height / 2),
-                                k_FontFace,
-                                k_FontScale,
-                                k_TextColor,
-                                k_LineThickness,
-                                k_LineType,
-                                false       // when drawing in an image with bottom left origin, this should be true
-                        );
-                    }
+                    display_results(
+                        tooth_count,
+                        centroid_i,
+                        teeth,
+                        tooth_anomaly_mask,
+                        output_image
+                    );
                 }
             }
 
             // ----- rendering -----
             switch (show) {
-            case 0: cv::imshow(main_window, g_source_image); break;
-            case 1: cv::imshow(main_window, g_foreground);   break;
+            case 0: cv::imshow(main_window,  output_image); break;
+            case 1: cv::imshow(main_window, g_foreground);  break;
             }
 
             // ----- key input handling -----
@@ -631,10 +650,18 @@ int main(int, char* argv[]) {
                     save_image(g_source_image);
                     break;
 
-                case 32: // space bar
+                case ' ': // space bar
                     //cycle through shown images
                     if (++show > 1)
                         show = 0;
+                    break;
+
+                case 13: // enter
+                    use_live_video = !use_live_video;
+
+                    if (!use_live_video)
+                        static_image = g_source_image.clone(); // store the last live image as the static image
+
                     break;
 
                 case -1: // timeout

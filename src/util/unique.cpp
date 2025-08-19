@@ -1,6 +1,6 @@
 #include "unique.h"
 
-namespace cvc::util {
+namespace cc::util {
     UniqueFile open_FILE(
         const std::filesystem::path& p,
         const char* flags

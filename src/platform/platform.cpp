@@ -1,7 +1,7 @@
 #include "platform.h"
 #include <ostream>
 
-namespace cvc {
+namespace cc {
     std::ostream& operator << (std::ostream& os, ePlatform x) {
         switch (x) {
             case ePlatform::windows: os << "Windows"; break;

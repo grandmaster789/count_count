@@ -3,7 +3,7 @@
 
 #include "build_date.h"
 
-namespace cvc {
+namespace cc {
     constexpr std::chrono::system_clock::time_point get_build_date() {
         using namespace std::chrono;
 

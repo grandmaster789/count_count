@@ -36,7 +36,7 @@
     #error "Unsupported platform"
 #endif
 
-namespace cvc {
+namespace cc {
     enum class ePlatform {
         windows = CVC_PLATFORM_WINDOWS,
         linux   = CVC_PLATFORM_LINUX,
