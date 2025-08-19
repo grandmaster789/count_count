@@ -3,18 +3,11 @@
 #include "platform/build_date.h"
 #include "io/jpg.h"
 #include "io/data_location.h"
-#include "types/tooth_measurement.h"
 #include "types/tooth_anomaly.h"
-#include "types/rgb.h"
-#include "types/color_range.h"
 #include "types/resolution.h"
 #include "types/settings.h"
-#include "math/statistics.h"
-#include "math/angles.h"
 #include "gui/visualization.h"
 #include "processing/foreground.h"
-#include "processing/centroid.h"
-#include "processing/count_teeth.h"
 #include "processing/anomalies.h"
 #include "processing/contours.h"
 
@@ -27,8 +20,6 @@
 #include <filesystem>
 #include <fstream>
 #include <numbers>
-#include <algorithm>
-#include <numeric>
 
 #include <execution>
 
@@ -165,6 +156,10 @@ int main(int, char* argv[]) {
 
     namespace fs = std::filesystem;
 
+    using cc::processing::determine_foreground;
+    using cc::processing::process_contours;
+    using cc::processing::find_anomalies;
+
     std::cout << "Starting Counting...\n";
     std::cout << "Running on: " << cc::ePlatform::current << '\n';
     std::cout << "Built "       << cc::get_days_since_build() << " days ago\n";
@@ -228,7 +223,7 @@ int main(int, char* argv[]) {
             output_image = g_source_image.clone();
 
             // ----- video processing -----
-            cc::processing::determine_foreground(
+            determine_foreground(
                 g_Settings.m_ForegroundColor,
                 g_Settings.m_ForegroundColorTolerance,
                 g_source_image,
@@ -249,22 +244,21 @@ int main(int, char* argv[]) {
             );
 
             if (!contours.empty()) {
-                auto maybe_result =  cc::processing::process_contours(
+                auto maybe_result =  process_contours(
                     contours,
                     hierarchy,
                     output_image
                 );
 
                 if (maybe_result) {
-                    auto [tooth_count, teeth, centroid_i] = *maybe_result;
+                    auto [teeth, centroid_i] = *maybe_result;
 
                     // early exit -- if we have found less than 8 teeth, it's probably not a gear that we found
-                    if (tooth_count >= k_MinimumToothCount) {
-                        auto tooth_anomaly_mask = cc::processing::find_anomalies(teeth);
+                    if (teeth.size() >= k_MinimumToothCount) {
+                        auto tooth_anomaly_mask = find_anomalies(teeth);
 
                         // and display the result in-image at the center of the gear
                         display_results(
-                            tooth_count,
                             centroid_i,
                             teeth,
                             tooth_anomaly_mask,
@@ -298,18 +292,19 @@ int main(int, char* argv[]) {
                     save_image(g_source_image);
                     break;
 
-                case ' ': // space bar
-                    //cycle through shown images
-                    if (++show > 1)
-                        show = 0;
-                    break;
-
-                case 13: // enter
+                case 'l':
+                case 'L':
                     use_live_video = !use_live_video;
 
                     if (!use_live_video)
                         static_image = g_source_image.clone(); // store the last live image as the static image
 
+                    break;
+
+                case 13: // enter
+                    //cycle through shown images
+                    if (++show > 1)
+                        show = 0;
                     break;
 
                 case -1: // timeout

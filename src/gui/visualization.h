@@ -16,7 +16,6 @@ namespace cc {
     );
 
     void display_results(
-        size_t                               tooth_count,
         cv::Point2i                          centroid_i,
         const std::vector<ToothMeasurement>& teeth,
         const std::vector<uint8_t>&          tooth_anomaly_mask,

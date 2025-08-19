@@ -19,15 +19,16 @@ namespace cc::processing {
         return std::nullopt;
     };
 
-    int count_teeth(
+    std::vector<ToothMeasurement> count_teeth(
               size_t                         first_tooth_idx,
         const std::vector<uint8_t>&          tooth_mask,
-              std::vector<ToothMeasurement>& teeth,
         const std::vector<cv::Point>&        largest_contour,
         const std::vector<double>&           distances,
         const cv::Point2f&                   centroid_f
     ) {
-        int result = 0;
+        int tooth_count = 0;
+
+        std::vector<ToothMeasurement> teeth;
 
         // from the first position, iterate over the entire set and collect measurements during traversal
         for (size_t i = first_tooth_idx; i < first_tooth_idx + tooth_mask.size(); ++i) {
@@ -37,11 +38,11 @@ namespace cc::processing {
             // count rising edges as the start of a tooth
             // the algorithm starts at a position where this is the case
             if (!current_mask_value && next_mask_value) {
-                ++result;
+                ++tooth_count;
 
                 cc::ToothMeasurement new_measurement;
                 new_measurement.m_StartMaskIdx  = i % (tooth_mask.size() - 1);
-                new_measurement.m_ToothIdx      = result;
+                new_measurement.m_ToothIdx      = tooth_count;
                 new_measurement.m_StartingAngle = std::atan2f(
                     largest_contour[new_measurement.m_StartMaskIdx].y - centroid_f.y,
                     largest_contour[new_measurement.m_StartMaskIdx].x - centroid_f.x
@@ -74,6 +75,6 @@ namespace cc::processing {
             }
         }
 
-        return result;
+        return teeth;
     }
 }

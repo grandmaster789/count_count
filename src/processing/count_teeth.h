@@ -12,10 +12,9 @@
 namespace cc::processing {
     std::optional<size_t> find_tooth_start(const std::vector<uint8_t>& mask);
 
-    int count_teeth(
+    std::vector<ToothMeasurement> count_teeth(
               size_t                         first_tooth,
         const std::vector<uint8_t>&          tooth_mask,
-              std::vector<ToothMeasurement>& teeth,
         const std::vector<cv::Point>&        largest_contour,
         const std::vector<double>&           distances,
         const cv::Point2f&                   centroid_f

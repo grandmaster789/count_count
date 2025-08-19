@@ -38,7 +38,6 @@ namespace cc {
     }
 
     void display_results(
-        size_t                                   tooth_count,
         cv::Point2i                              centroid_i,
         const std::vector<cc::ToothMeasurement>& teeth,
         const std::vector<uint8_t>&              tooth_anomaly_mask,
@@ -52,7 +51,7 @@ namespace cc {
         constexpr int    k_LineThickness = 2;
         constexpr int    k_LineType      = cv::LINE_AA;
 
-        auto tooth_count_half_str = std::to_string(tooth_count);
+        auto tooth_count_str = std::to_string(teeth.size());
 
         // draw the center
         cv::circle(
@@ -84,7 +83,7 @@ namespace cc {
         }
 
         auto text_size = cv::getTextSize(
-            tooth_count_half_str,
+            tooth_count_str,
             k_FontFace,
             k_FontScale,
             k_FontThickness,
@@ -94,7 +93,7 @@ namespace cc {
         // simple shadow
         cv::putText(
             output_image,
-            tooth_count_half_str,
+            tooth_count_str,
             centroid_i - cv::Point2i(text_size.width / 2, text_size.height / 2) + cv::Point2i(2, 2),
             k_FontFace,
             k_FontScale,
@@ -106,7 +105,7 @@ namespace cc {
 
         cv::putText(
             output_image,
-            tooth_count_half_str,
+            tooth_count_str,
             centroid_i - cv::Point2i(text_size.width / 2, text_size.height / 2),
             k_FontFace,
             k_FontScale,
