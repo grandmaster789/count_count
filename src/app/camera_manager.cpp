@@ -1,5 +1,7 @@
 #include "camera_manager.h"
 
+#include "util/logger.h"
+
 namespace cc::app {
     bool CameraManager::initialize(int device_id) {
         m_DeviceId = device_id;
@@ -35,7 +37,7 @@ namespace cc::app {
             return true;
         }
         else {
-            std::cerr << "Failed to open camera\n";
+            LOG_ERROR("Failed to open camera");
             return false;
         }
     }

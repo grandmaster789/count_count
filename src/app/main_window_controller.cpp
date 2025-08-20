@@ -1,6 +1,8 @@
 #include "main_window_controller.h"
 #include "settings_manager.h"
 
+#include "util/logger.h"
+
 namespace cc::app {
     SettingsManager* MainWindowController::m_SettingsManager = nullptr;
 
@@ -28,18 +30,18 @@ namespace cc::app {
     }
 
     void MainWindowController::select_color(int x, int y) {
+        if (m_LastImage.empty())
+            return;
+
         m_SettingsManager->get().m_ForegroundColor[0] = m_LastImage.at<cv::Vec3b>(y, x)[0];
         m_SettingsManager->get().m_ForegroundColor[1] = m_LastImage.at<cv::Vec3b>(y, x)[1];
         m_SettingsManager->get().m_ForegroundColor[2] = m_LastImage.at<cv::Vec3b>(y, x)[2];
 
-        std::cout << "RGB is #"
-                  << std::hex
-                  << std::setw(2)
-                  << std::setfill('0')
-                  << static_cast<int>(m_SettingsManager->get().m_ForegroundColor[0])
-                  << static_cast<int>(m_SettingsManager->get().m_ForegroundColor[1])
-                  << static_cast<int>(m_SettingsManager->get().m_ForegroundColor[2])
-                  << '\n';
+        LOG_INFO("Selected color: #{}{}{}",
+                 m_SettingsManager->get().m_ForegroundColor[0],
+                 m_SettingsManager->get().m_ForegroundColor[1],
+                 m_SettingsManager->get().m_ForegroundColor[2]
+        );
     }
 
     int MainWindowController::wait_key(int delay_ms) {
@@ -62,7 +64,7 @@ namespace cc::app {
         // https://docs.opencv.org/4.11.0/d7/dfc/group__highgui.html#gab7aed186e151d5222ef97192912127a4
         switch (event) {
             case cv::MouseEventTypes::EVENT_LBUTTONDOWN:
-                std::cout << "Clicked at (" << x << ", " << y << ")\n";
+                LOG_INFO("Clicked at ({}, {})", x, y);
                 self->select_color(x, y);
                 break;
 

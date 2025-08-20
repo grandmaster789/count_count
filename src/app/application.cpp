@@ -12,12 +12,14 @@
 
 #include "gui/visualization.h"
 
+#include "util/logger.h"
+
 namespace {
     void save_image(const cv::Mat& img) {
         using cc::io::save_jpg;
 
         if (img.empty()) {
-            std::cout << "Cannot save empty image; skipping\n";
+            LOG_WARNING("Cannot save empty image; Skipping");
             return;
         }
 
@@ -27,7 +29,8 @@ namespace {
         );
 
         save_jpg(img, timestamped_filename);
-        std::cout << "Saved " << timestamped_filename << '\n';
+
+        LOG_INFO("Saved image to {}", timestamped_filename);
     }
 }
 
@@ -46,7 +49,7 @@ namespace cc::app {
         print_startup_info();
         main_loop();
 
-        std::cout << "Exiting application\n";
+        LOG_INFO("Exiting application");
 
         return 0;
     }
@@ -83,10 +86,10 @@ namespace cc::app {
             if (m_UseLiveVideo) {
                 if (!m_CameraManager->is_initialized()) {
                     if (!m_CameraManager->set_resolution(m_SettingsManager->get().m_SourceResolution))
-                        std::cerr << "Cannot set resolution to " << m_SettingsManager->get().m_SourceResolution << '\n';
+                        LOG_ERROR("Cannot set resolution to {}", m_SettingsManager->get().m_SourceResolution);
 
                     if (!m_CameraManager->initialize(m_SettingsManager->get().m_SelectedCamera)) {
-                        std::cerr << "Cannot initialize camera\n";
+                        LOG_ERROR("Cannot initialize camera");
                         return;
                     }
                 }
@@ -97,7 +100,7 @@ namespace cc::app {
                 m_SourceImage = static_image.clone(); // single image
 
             if (m_SourceImage.empty()) {
-                std::cerr << "Failed to retrieve image from webcam; exiting application\n";
+                LOG_ERROR("Cannot retrieve image from webcam");
                 break;
             }
 
@@ -164,7 +167,7 @@ namespace cc::app {
                 case 27: // escape key
                 case 'q':
                 case 'Q':
-                    std::cout << "Exiting application\n";
+                    LOG_INFO("Exiting application");
                     m_Running = false;
                     break;
 
@@ -194,7 +197,7 @@ namespace cc::app {
                     break;
 
                 default:
-                    std::cout << "Pressed: " << key << '\n';
+                    LOG_INFO("Key pressed: {}", key);
                     break;
             }
 
@@ -205,12 +208,12 @@ namespace cc::app {
     }
 
     void Application::print_startup_info() const {
-        std::cout << "Starting Counting...\n";
-        std::cout << "Running on: " << cc::ePlatform::current << '\n';
-        std::cout << "Built       " << cc::get_days_since_build() << " days ago\n";
-        std::cout << "Exe path:   " << m_ExePath.string() << '\n';
-        std::cout << "Data path:  " << m_DataPath.string() << '\n';
+        LOG_INFO("Starting Counting...");
+        LOG_INFO("Running on: {}",          ePlatform::current);
+        LOG_INFO("Built       {} days ago", get_days_since_build());
+        LOG_INFO("Exe path:   {}",          m_ExePath.string());
+        LOG_INFO("Data path:  {}",          m_DataPath.string());
 
-        std::cout << "Selected resolution: " << m_SettingsManager->get().m_SourceResolution << '\n';
+        LOG_INFO("Selected resolution: {}", m_SettingsManager->get().m_SourceResolution);
     }
 }
