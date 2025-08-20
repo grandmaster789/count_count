@@ -10,15 +10,19 @@ namespace cc::app {
     public:
         bool initialize(int device_id = 0);
 
+        [[nodiscard]] bool is_initialized() const;
+
         [[nodiscard]] cv::Mat    grab_frame();
 
         [[nodiscard]] Resolution get_resolution() const;
-        [[nodiscard]] bool       set_resolution(const Resolution& res); // NOTE this might not actually set the resolution as expected; returns false if it didn't work out
+        [[nodiscard]] bool       set_resolution(const Resolution& res); // NOTE this might not set the resolution as expected; returns false if it didn't work out
 
     private:
-        bool check_resolution(int camera_id, const Resolution& res) const;
+        static bool check_resolution(int camera_id, const Resolution& res);
 
-        FlatMap<int, Resolution> m_Cameras;
+        int              m_DeviceId = 0;
+        cv::VideoCapture m_CaptureSource;
+        Resolution       m_Resolution;
     };
 }
 
