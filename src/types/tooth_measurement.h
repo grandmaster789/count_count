@@ -1,13 +1,13 @@
 #ifndef CC_TYPES_TOOTH_MEASUREMENT_H
 #define CC_TYPES_TOOTH_MEASUREMENT_H
 
-#include <numeric>
+#include <limits>
 #include <iosfwd>
 
 namespace cc {
     struct ToothMeasurement {
         double m_MinDistance =  std::numeric_limits<double>::max();
-        double m_MaxDistance = -std::numeric_limits<double>::max();;
+        double m_MaxDistance = -std::numeric_limits<double>::max();
         double m_StartingAngle;
         double m_EndingAngle;
 
