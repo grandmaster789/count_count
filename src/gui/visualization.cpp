@@ -22,19 +22,13 @@ namespace cc {
             gear_center.y + 0.5 * gear_radius * std::sin(angle)
         );
 
-        cv::Point2d left(
-            gear_center.x + 0.9 * gear_radius * std::cos(angle - std::numbers::pi / 40.0),
-            gear_center.y + 0.9 * gear_radius * std::sin(angle - std::numbers::pi / 40.0)
+        cv::arrowedLine(
+            output_image,
+            from,
+            to,
+            color,
+            thickness
         );
-
-        cv::Point2d right(
-            gear_center.x + 0.9 * gear_radius * std::cos(angle + std::numbers::pi / 40.0),
-            gear_center.y + 0.9 * gear_radius * std::sin(angle + std::numbers::pi / 40.0)
-        );
-
-        cv::line(output_image, from,  to, color, thickness);
-        cv::line(output_image, left,  to, color, thickness);
-        cv::line(output_image, right, to, color, thickness);
     }
 
     void display_results(
@@ -46,12 +40,12 @@ namespace cc {
         constexpr int    k_FontFace      = cv::FONT_HERSHEY_SIMPLEX;
         constexpr double k_FontScale     = 1.0;
         constexpr int    k_FontThickness = 3;
-        const cv::Scalar k_TextColor     = cv::Scalar(255, 255, 255);
+        const cv::Scalar k_GoodTextColor = cv::Scalar(0,   255, 0); // green  (BGR)
+        const cv::Scalar k_BadTextColor  = cv::Scalar(0,   0, 255); // red    (BGR)
+        const cv::Scalar k_GapColor      = cv::Scalar(255, 0, 255); // purple (BGR)
         const cv::Scalar k_TextBgColor   = cv::Scalar(0, 0, 0);
         constexpr int    k_LineThickness = 2;
         constexpr int    k_LineType      = cv::LINE_AA;
-
-        auto tooth_count_str = std::to_string(teeth.size());
 
         // draw the center
         cv::circle(
@@ -64,13 +58,27 @@ namespace cc {
             0                           // shift
         );
 
+        // see if we have any anomalies
+        size_t num_arc_anomalies = 0;
+        size_t num_gap_anomalies = 0;
+
+        for (auto anomaly : tooth_anomaly_mask) {
+            if (anomaly & cc::ToothAnomaly::gap)
+                ++num_gap_anomalies;
+            if (anomaly & cc::ToothAnomaly::arc)
+                ++num_arc_anomalies;
+        }
+
         // visualize anomalies using arrows from the center towards the missing tooth
+        // and lines along the gap areas. Gap areas are rare, so if we see them we don't draw the arc anomalies
         {
             for (size_t i = 0; i < teeth.size(); ++i) {
                 const auto& measurement       = teeth[i];
                 const auto& anomaly_detection = tooth_anomaly_mask[i];
 
-                if (anomaly_detection & cc::ToothAnomaly::arc) {
+                if (num_gap_anomalies == 0 &&
+                    anomaly_detection & cc::ToothAnomaly::arc
+                ) {
                     draw_gear_arrow(
                         output_image,
                         centroid_i,
@@ -79,11 +87,52 @@ namespace cc {
                         cv::Scalar(255, 255, 127)
                     );
                 }
+
+                if (anomaly_detection & cc::ToothAnomaly::gap) {
+                    auto gear_point = [centroid_i, measurement](double angle) {
+                        return centroid_i + cv::Point2i(
+                            static_cast<int>(measurement.m_MinDistance * std::cos(angle)),
+                            static_cast<int>(measurement.m_MinDistance * std::sin(angle))
+                        );
+                    };
+
+                    auto start_angle = measurement.m_StartingAngle;
+                    auto mid_angle   = (measurement.m_EndingAngle + measurement.m_StartingAngle) / 2.0;
+                    auto end_angle   = measurement.m_EndingAngle;
+
+                    cv::line(
+                        output_image,
+                        gear_point(start_angle),
+                        gear_point(mid_angle),
+                        k_GapColor,
+                        3 // line thickness
+                    );
+
+                    cv::line(
+                        output_image,
+                        gear_point(mid_angle),
+                        gear_point(end_angle),
+                        k_GapColor,
+                        3 // line thickness
+                    );
+                }
             }
         }
 
+        // when we have no anomalies, the number of teeth is equal to the number of measurements
+        // - use green text to indicate that everything is ok
+        auto tooth_count_str = std::to_string(teeth.size());
+
+        auto message = tooth_count_str + '/' + tooth_count_str;
+
+        if (num_arc_anomalies > 0)
+            message = tooth_count_str + '/' + std::to_string(teeth.size() + num_arc_anomalies);
+
+        if (num_gap_anomalies > 0)
+            message = "?";
+
         auto text_size = cv::getTextSize(
-            tooth_count_str,
+            message,
             k_FontFace,
             k_FontScale,
             k_FontThickness,
@@ -93,7 +142,7 @@ namespace cc {
         // simple shadow
         cv::putText(
             output_image,
-            tooth_count_str,
+            message,
             centroid_i - cv::Point2i(text_size.width / 2, text_size.height / 2) + cv::Point2i(2, 2),
             k_FontFace,
             k_FontScale,
@@ -105,11 +154,11 @@ namespace cc {
 
         cv::putText(
             output_image,
-            tooth_count_str,
+            message,
             centroid_i - cv::Point2i(text_size.width / 2, text_size.height / 2),
             k_FontFace,
             k_FontScale,
-            k_TextColor,
+            (num_arc_anomalies == 0 ? k_GoodTextColor : k_BadTextColor),
             k_LineThickness,
             k_LineType,
             false       // when drawing in an image with bottom left origin, this should be true
