@@ -23,8 +23,8 @@ namespace cc::processing {
         std::vector<double> tooth_arcs;
 
         for (size_t i = 0; i < teeth.size(); ++i) {
-            const auto &current = teeth[i];
-            const auto &next = teeth[(i + 1) % teeth.size()];;
+            const auto& current = teeth[i];
+            const auto& next    = teeth[(i + 1) % teeth.size()];;
 
             tooth_arcs.push_back(
                 arc_length(

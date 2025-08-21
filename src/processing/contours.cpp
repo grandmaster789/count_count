@@ -67,9 +67,6 @@ namespace cc::processing {
         for (size_t i = 0; i < largest_contour.size(); ++i)
             tooth_mask[i] = (distances[i] < distance_threshold) ? 1 : 0;
 
-        // Here we figure out how often the threshold is crossed to determine a tooth count
-        // -- only count the 'rising' edges to establish a count
-        // -- also figure out some tooth measurements
         auto first_tooth = find_tooth_start(tooth_mask);
         if (!first_tooth)
             return std::nullopt;

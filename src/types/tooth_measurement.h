@@ -11,8 +11,8 @@ namespace cc {
         double m_StartingAngle;
         double m_EndingAngle;
 
-        size_t m_StartMaskIdx;
-        size_t m_EndMaskIdx;
+        size_t m_LowHighTransitionIdx;
+        size_t m_HighLowTransitionIdx;
 
         size_t m_ToothIdx;
 

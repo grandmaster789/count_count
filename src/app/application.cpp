@@ -82,15 +82,18 @@ namespace cc::app {
         m_Running = true;
 
         while (m_Running) {
+            auto settings = m_SettingsManager->get(); // fetch settings once per frame
+
             // ----- video input -----
             if (m_UseLiveVideo) {
                 if (!m_CameraManager->is_initialized()) {
-                    if (!m_CameraManager->set_resolution(m_SettingsManager->get().m_SourceResolution))
-                        LOG_ERROR("Cannot set resolution to {}", m_SettingsManager->get().m_SourceResolution);
+                    if (!m_CameraManager->set_resolution(settings.m_SourceResolution))
+                        LOG_ERROR("Cannot set resolution to {}", settings.m_SourceResolution);
 
-                    if (!m_CameraManager->initialize(m_SettingsManager->get().m_SelectedCamera)) {
+                    if (!m_CameraManager->initialize(settings.m_SelectedCamera)) {
                         LOG_ERROR("Cannot initialize camera");
-                        return;
+                        m_Running = false;
+                        break;
                     }
                 }
 
@@ -110,8 +113,8 @@ namespace cc::app {
 
             // ----- video processing -----
             processing::determine_foreground(
-                m_SettingsManager->get().m_ForegroundColor,
-                m_SettingsManager->get().m_ForegroundColorTolerance,
+                settings.m_ForegroundColor,
+                settings.m_ForegroundColorTolerance,
                 m_SourceImage,
                 m_ForegroundMask,
                 m_Foreground
@@ -158,6 +161,8 @@ namespace cc::app {
             switch (m_Show) {
                 case e_ShowImage::processed_image: m_UiController->show(output_image); break;
                 case e_ShowImage::foreground:      m_UiController->show(m_Foreground); break;
+                default:
+                    break;
             }
 
             // ----- key input handling -----
@@ -167,7 +172,6 @@ namespace cc::app {
                 case 27: // escape key
                 case 'q':
                 case 'Q':
-                    LOG_INFO("Exiting application");
                     m_Running = false;
                     break;
 

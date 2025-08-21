@@ -64,7 +64,7 @@ namespace cc {
             0                           // shift
         );
 
-        // visualize anomalies using a simple line from the center towards the tooth
+        // visualize anomalies using arrows from the center towards the missing tooth
         {
             for (size_t i = 0; i < teeth.size(); ++i) {
                 const auto& measurement       = teeth[i];
