@@ -24,6 +24,9 @@ namespace cc::app {
 
         void reset_to_default();
 
+        void       set_selected_color(const cv::Scalar& color);
+        cv::Scalar get_selected_color() const;
+
     private:
         Settings              m_Settings;
         std::filesystem::path m_ConfigFile = "count_count.cfg";

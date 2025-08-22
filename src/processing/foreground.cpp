@@ -3,11 +3,11 @@
 
 namespace cc::processing {
     void determine_foreground(
-        const RGB&     selected_color,
-              int      tolerance_range,
-        const cv::Mat& source_image,
-              cv::Mat& foreground_mask,
-              cv::Mat& foreground
+        const cv::Scalar& selected_color,
+              int         tolerance_range,
+        const cv::Mat&    source_image,
+              cv::Mat&    foreground_mask,
+              cv::Mat&    foreground
     ) {
         foreground_mask = cv::Mat::zeros(source_image.size(), CV_8UC1);
 

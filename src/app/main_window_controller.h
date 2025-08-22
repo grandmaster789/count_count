@@ -31,6 +31,8 @@ namespace cc::app {
         int  wait_key(int delay_ms = 30);
         bool is_open() const;
 
+        cv::Scalar get_color_at(int x, int y) const;
+
     private:
         std::string                m_WindowName;
         ColorSelectedCallback      m_ColorCallback;

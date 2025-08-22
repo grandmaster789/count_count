@@ -31,14 +31,13 @@ namespace cc::app {
         if (m_LastImage.empty())
             return;
 
-        m_SettingsManager->get().m_ForegroundColor[0] = m_LastImage.at<cv::Vec3b>(y, x)[0];
-        m_SettingsManager->get().m_ForegroundColor[1] = m_LastImage.at<cv::Vec3b>(y, x)[1];
-        m_SettingsManager->get().m_ForegroundColor[2] = m_LastImage.at<cv::Vec3b>(y, x)[2];
+        auto color = get_color_at(x, y);
+        m_SettingsManager->set_selected_color(color);
 
         LOG_INFO("Selected color: #{}{}{}",
-                 m_SettingsManager->get().m_ForegroundColor[0],
-                 m_SettingsManager->get().m_ForegroundColor[1],
-                 m_SettingsManager->get().m_ForegroundColor[2]
+            color[0],
+            color[1],
+            color[2]
         );
     }
 
@@ -47,7 +46,11 @@ namespace cc::app {
     }
 
     bool MainWindowController::is_open() const {
-        return cv::getWindowProperty(m_WindowName, cv::WND_PROP_VISIBLE) >= 0;
+        return cv::getWindowProperty(m_WindowName, cv::WND_PROP_VISIBLE) > 0;
+    }
+
+    cv::Scalar MainWindowController::get_color_at(int x, int y) const {
+        return m_LastImage.at<cv::Vec3b>(y, x);
     }
 
     void MainWindowController::mouse_callback(

@@ -2,14 +2,14 @@
 
 namespace cc {
     ColorRange determine_color_range(
-        const RGB& selected_color,
-        int        tolerance_range
+        const cv::Scalar& selected_color,
+        int               tolerance_range
     ) {
         ColorRange result;
 
         for (int i = 0; i < 3; ++i) {
-            int lower = selected_color[i] - (tolerance_range / 2);
-            int upper = selected_color[i] + (tolerance_range / 2);
+            int lower = static_cast<int>(selected_color[i]) - (tolerance_range / 2);
+            int upper = static_cast<int>(selected_color[i]) + (tolerance_range / 2);
 
             if (lower < 0)
                 lower = 0;

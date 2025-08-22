@@ -41,4 +41,12 @@ namespace cc::app {
     void SettingsManager::reset_to_default() {
         m_Settings = Settings {};
     }
+
+    void SettingsManager::set_selected_color(const cv::Scalar& color) {
+        m_Settings.m_ForegroundColor = color;
+    }
+
+    cv::Scalar SettingsManager::get_selected_color() const {
+        return m_Settings.m_ForegroundColor;
+    }
 }

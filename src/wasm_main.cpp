@@ -1,3 +1,5 @@
+// This was suggested by Claude 4, and is very broken. Still, it's a decent starting point.
+
 #include <emscripten.h>
 #include <emscripten/bind.h>
 

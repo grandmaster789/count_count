@@ -31,9 +31,9 @@ namespace cc {
         is >> s.m_ForegroundColorTolerance;
 
         s.m_ForegroundColor = {
-            static_cast<uint8_t>(fg0),
-            static_cast<uint8_t>(fg1),
-            static_cast<uint8_t>(fg2)
+            static_cast<double>(fg0),
+            static_cast<double>(fg1),
+            static_cast<double>(fg2)
         };
 
         return is;
