@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <vector>
 #include <numbers>
+#include <random>
+#include <numeric>
 
 #include "processing/anomalies.h"
 #include "types/tooth_measurement.h"
@@ -35,6 +37,34 @@ std::vector<ToothMeasurement> make_uniform_gear(int num_teeth) {
                  (2 * i + 1) * tooth_arc
             )
         );
+
+    return teeth;
+}
+
+std::vector<ToothMeasurement> make_normal_gear(
+    int    num_teeth,
+    double sigma
+) {
+    auto teeth = make_uniform_gear(num_teeth);
+
+    if (teeth.empty())
+        return teeth;
+
+    double mean_arc =
+        teeth[0].m_EndingAngle -
+        teeth[0].m_StartingAngle;
+
+    std::default_random_engine generator(123); // fixed seed for reproducibility
+    std::normal_distribution<> distribution(mean_arc, sigma);
+
+    // redistribute the teeth to make them more normal
+    for (auto& measurement : teeth) {
+        double arc    = distribution(generator);
+        double center = (measurement.m_StartingAngle + measurement.m_EndingAngle) / 2.0;
+
+        measurement.m_StartingAngle = center - arc / 2.0;
+        measurement.m_EndingAngle   = center + arc / 2.0;
+    }
 
     return teeth;
 }
@@ -110,14 +140,21 @@ TEST_CASE("find_anomalies - arc anomaly", "[anomalies]") {
 
 TEST_CASE("find_anomalies - statistical threshold", "[anomalies]") {
     // Create a scenario where we can verify the 3-sigma threshold
-    auto teeth_for_threshold_test = make_uniform_gear(12);
+    double sigma = 0.1;
+    auto teeth_for_threshold_test = make_normal_gear(12, sigma);
 
-    auto regular_tooth_arc =
-        teeth_for_threshold_test[0].m_EndingAngle -
-        teeth_for_threshold_test[0].m_StartingAngle;
+    double mean_tooth_arc = std::accumulate(
+        std::begin(teeth_for_threshold_test),
+        std::end(teeth_for_threshold_test),
+        0.0,
+        [](double acc, const auto& measurement) {
+            return acc + (measurement.m_EndingAngle - measurement.m_StartingAngle);
+        }
+    ) / static_cast<double>(teeth_for_threshold_test.size());
 
-    teeth_for_threshold_test[5].m_StartingAngle -= 0.01 * regular_tooth_arc;
-    teeth_for_threshold_test[5].m_EndingAngle   += 0.01 * regular_tooth_arc;
+    // create a disturbance that is moderately difference from the mean
+    teeth_for_threshold_test[5].m_StartingAngle -= sigma * mean_tooth_arc;
+    teeth_for_threshold_test[5].m_EndingAngle   += sigma * mean_tooth_arc;
 
     auto result = find_anomalies(teeth_for_threshold_test);
     REQUIRE(result.size() == 12);
