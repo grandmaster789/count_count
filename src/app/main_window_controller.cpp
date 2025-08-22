@@ -4,8 +4,6 @@
 #include "util/logger.h"
 
 namespace cc::app {
-    SettingsManager* MainWindowController::m_SettingsManager = nullptr;
-
     MainWindowController::MainWindowController(
         SettingsManager*   settings_manager,
         const std::string& window_name

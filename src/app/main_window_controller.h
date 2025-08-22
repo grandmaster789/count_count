@@ -35,7 +35,7 @@ namespace cc::app {
         std::string                m_WindowName;
         ColorSelectedCallback      m_ColorCallback;
         SensitivityChangedCallback m_SensitivityCallback;
-        static SettingsManager*    m_SettingsManager;
+        SettingsManager*           m_SettingsManager;
         cv::Mat                    m_LastImage;
 
         static void mouse_callback   (int event, int x, int y, int flags, void* userdata);
