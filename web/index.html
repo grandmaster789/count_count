@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Count Von Count - WebAssembly</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        canvas { border: 1px solid #ccc; max-width: 100%; }
+        .controls { margin: 20px 0; }
+        .result { margin: 10px 0; padding: 10px; background: #f0f0f0; border-radius: 5px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Count Von Count - Gear Tooth Counter</h1>
+
+    <div class="controls">
+        <input type="file" id="imageInput" accept="image/*">
+        <br><br>
+
+        <label>Foreground Color:</label>
+        <input type="color" id="foregroundColor" value="#787878">
+
+        <label>Tolerance:</label>
+        <input type="range" id="tolerance" min="10" max="100" value="30">
+        <span id="toleranceValue">30</span>
+
+        <button id="processButton" disabled>Process Image</button>
+    </div>
+
+    <div class="result" id="result" style="display: none;"></div>
+
+    <canvas id="inputCanvas"></canvas>
+    <canvas id="outputCanvas"></canvas>
+</div>
+
+<script>
+    let wasmModule = null;
+    let processor = null;
+
+    // Load the WebAssembly module
+    CountVonCount().then(function(Module) {
+        wasmModule = Module;
+        processor = new Module.WasmImageProcessor();
+        console.log('WebAssembly module loaded successfully');
+        document.getElementById('processButton').disabled = false;
+    });
+
+    // Handle file input
+    document.getElementById('imageInput').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    drawImageOnCanvas(img, 'inputCanvas');
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+    });
+
+    // Handle tolerance slider
+    document.getElementById('tolerance').addEventListener('input', function(e) {
+        document.getElementById('toleranceValue').textContent = e.target.value;
+    });
+
+    // Process image button
+    document.getElementById('processButton').addEventListener('click', function() {
+        if (processor) {
+            processImage();
+        }
+    });
+
+    function drawImageOnCanvas(img, canvasId) {
+        const canvas = document.getElementById(canvasId);
+        const ctx = canvas.getContext('2d');
+
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+    }
+
+    function processImage() {
+        const canvas = document.getElementById('inputCanvas');
+        const ctx = canvas.getContext('2d');
+
+        if (canvas.width === 0 || canvas.height === 0) {
+            alert('Please select an image first');
+            return;
+        }
+
+        // Get image data
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+
+        // Convert RGBA to RGB
+        const rgbData = new Uint8Array(canvas.width * canvas.height * 3);
+        for (let i = 0, j = 0; i < data.length; i += 4, j += 3) {
+            rgbData[j] = data[i];       // R
+            rgbData[j + 1] = data[i + 1]; // G
+            rgbData[j + 2] = data[i + 2]; // B
+        }
+
+        // Update processor settings
+        const colorInput = document.getElementById('foregroundColor');
+        const tolerance = parseInt(document.getElementById('tolerance').value);
+        const color = hexToRgb(colorInput.value);
+
+        processor.set_foreground_color(color.r, color.g, color.b);
+        processor.set_foreground_tolerance(tolerance);
+
+        try {
+            // Process the image
+            const result = processor.process_image(rgbData, canvas.width, canvas.height);
+
+            // Display results
+            const resultDiv = document.getElementById('result');
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = `
+                    <strong>Result:</strong> ${result.result_message}<br>
+                    <strong>Teeth Count:</strong> ${result.tooth_count}<br>
+                    <strong>Anomalies:</strong> ${result.anomaly_count}
+                `;
+
+            // Display output image
+            displayOutputImage(result.output_image_data, result.image_width, result.image_height);
+
+        } catch (error) {
+            console.error('Processing error:', error);
+            alert('Error processing image: ' + error.message);
+        }
+    }
+
+    function displayOutputImage(outputData, width, height) {
+        const outputCanvas = document.getElementById('outputCanvas');
+        const ctx = outputCanvas.getContext('2d');
+
+        outputCanvas.width = width;
+        outputCanvas.height = height;
+
+        // Convert RGB back to RGBA for canvas
+        const imageData = ctx.createImageData(width, height);
+        const data = imageData.data;
+
+        for (let i = 0, j = 0; j < outputData.length; i += 4, j += 3) {
+            data[i] = outputData[j];       // R
+            data[i + 1] = outputData[j + 1]; // G
+            data[i + 2] = outputData[j + 2]; // B
+            data[i + 3] = 255;             // A
+        }
+
+        ctx.putImageData(imageData, 0, 0);
+    }
+
+    function hexToRgb(hex) {
+        const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+        return result ? {
+            r: parseInt(result[1], 16),
+            g: parseInt(result[2], 16),
+            b: parseInt(result[3], 16)
+        } : null;
+    }
+</script>
+</body>
+</html>
