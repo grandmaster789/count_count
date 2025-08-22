@@ -34,10 +34,10 @@ namespace cc::app {
         auto color = get_color_at(x, y);
         m_SettingsManager->set_selected_color(color);
 
-        LOG_INFO("Selected color: #{}{}{}",
-            color[0],
-            color[1],
-            color[2]
+        LOG_INFO("Selected color: #{:02x}{:02x}{:02x}",
+            static_cast<uint8_t>(color[0]),
+            static_cast<uint8_t>(color[1]),
+            static_cast<uint8_t>(color[2])
         );
     }
 
