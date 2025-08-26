@@ -3,7 +3,6 @@
 
 #include <opencv2/opencv.hpp>
 #include "types/resolution.h"
-#include "util/flat_map.h"
 
 namespace cc::app {
     class CameraManager {
