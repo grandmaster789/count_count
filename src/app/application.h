@@ -35,7 +35,7 @@ namespace cc::app {
         std::unique_ptr<MainWindowController> m_UiController;
 
         bool m_Running      = false;
-        bool m_UseLiveVideo = false;
+        bool m_UseLiveVideo = true;  // set this to false to use a reference image instead
 
         static constexpr const size_t k_MinimumToothCount = 8;
 

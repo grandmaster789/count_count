@@ -1,11 +1,15 @@
 
 ## Dependencies
 
-The project uses the following major dependencies:
+The project uses the following dependencies:
 
 - **OpenCV 4.x**: Core computer vision library for image processing
+- **Stbi**: Image loading library
+- **Catch2**: Unit testing framework
 - **Standard Template Library (STL)**: C++ standard library components
 - **vcpkg**: Package manager for C++ dependencies
+
+Dependencies are managed using [vcpkg](https://github.com/microsoft/vcpkg).
 
 ### System Requirements
 
@@ -17,7 +21,7 @@ The project uses the following major dependencies:
 
 1. **Clone the repository**:
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/grandmaster789/count_count.git
    cd CountVonCount
    ```
 
@@ -36,19 +40,19 @@ The project uses the following major dependencies:
 
 ## Usage
 
-1. **Prepare your gear images**: Place gear images in the `data/` directory
-2. **Configure parameters**: Adjust settings in `data/count_count.cfg`
-3. **Run the application**: Execute the built binary
+1. **Run the application**: Execute the built binary
+2. **Click on the gear**: Click on the gear to select a foreground color
+3. **Adjust the sensitivity**: Use the slider to adjust the sensitivity of the foreground color detection
 4. **Review results**: The application will output tooth count and any detected anomalies
 
 ## Configuration
 
 The application behavior can be customized through the configuration file (`data/count_count.cfg`). Key parameters include:
 
-- Image processing thresholds
-- Contour detection sensitivity
-- Tooth counting parameters
-- Anomaly detection criteria
+- Previously selected foreground color
+- Foreground detection sensitivity
+- Selected webcam identifier
+- Webcam resolution
 
 ## Testing
 
