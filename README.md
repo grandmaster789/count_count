@@ -3,7 +3,7 @@
 
 The project uses the following dependencies:
 
-- **OpenCV 4.x**: Core computer vision library for image processing
+- **OpenCV 4.10**: Core computer vision library for image processing
 - **Stbi**: Image loading library
 - **Catch2**: Unit testing framework
 - **Standard Template Library (STL)**: C++ standard library components
@@ -77,6 +77,10 @@ Processing occurs in several stages:
 - This will not work if there are too many irregularities, but it should work well enough for most cases.
 - Finally, we display the gears' contour, the actual tooth count and the assumed total tooth count.
 - If there are any anomalies detected, the counts will be shown in red, otherwise they will be shown in green.
+
+## Screenshots
+
+![screenshot.PNG](screenshot.PNG)
 
 ## Testing
 
