@@ -34,7 +34,11 @@
       "Bash(D:/Projects/count_count/vcpkg/vcpkg.exe version:*)",
       "Bash(git -C D:/Projects/count_count/vcpkg log --oneline -1)",
       "Bash(git -C D:/Projects/count_count/vcpkg remote -v)",
-      "Bash(wc -l /d/Projects/count_count/src/processing/*.cpp /d/Projects/count_count/src/app/*.cpp)"
+      "Bash(wc -l /d/Projects/count_count/src/processing/*.cpp /d/Projects/count_count/src/app/*.cpp)",
+      "Bash(MSBuild CountVonCount.sln /t:Build /p:Configuration=Release /m /nologo)",
+      "Bash(MSBuild \"D:/Projects/count_count/build/CountVonCount.sln\" /t:Build /p:Configuration=Release /m /nologo)",
+      "PowerShell(& \"C:\\\\Program Files\\\\Microsoft Visual Studio\\\\2022\\\\Community\\\\MSBuild\\\\Current\\\\Bin\\\\MSBuild.exe\" \"D:\\\\Projects\\\\count_count\\\\build\\\\CountVonCount.sln\" /t:Build /p:Configuration=Release /m /nologo 2>&1 | Select-Object -Last 20)",
+      "PowerShell(& \"C:\\\\Program Files\\\\Microsoft Visual Studio\\\\18\\\\Insiders\\\\MSBuild\\\\Current\\\\Bin\\\\MSBuild.exe\" \"D:\\\\Projects\\\\count_count\\\\build\\\\CountVonCount.sln\" /t:Build /p:Configuration=Release /m /nologo 2>&1 | Select-Object -Last 25)"
     ]
   }
 }

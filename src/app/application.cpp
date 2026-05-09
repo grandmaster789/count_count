@@ -18,8 +18,17 @@
 #include "util/logger.h"
 
 #include <cstring>
+#include <map>
 
 namespace {
+    int mode_of(const std::deque<int>& values) {
+        std::map<int, int> freq;
+        for (int v : values) if (v > 0) ++freq[v];
+        if (freq.empty()) return -1;
+        return std::max_element(freq.begin(), freq.end(),
+            [](const auto& a, const auto& b) { return a.second < b.second; })->first;
+    }
+
     void save_image(const cc::Image& img, const std::filesystem::path& data_path) {
         using cc::io::save_jpg;
 
@@ -165,8 +174,21 @@ namespace cc::app {
                         break;
                 }
 
+                {
+                    int filled = 0;
+                    int total  = m_ForegroundMask.rows() * m_ForegroundMask.cols();
+                    for (int y = 0; y < m_ForegroundMask.rows(); ++y) {
+                        const uint8_t* row = m_ForegroundMask.ptr(y);
+                        for (int x = 0; x < m_ForegroundMask.cols(); ++x)
+                            if (row[x]) ++filled;
+                    }
+                    LOG_DEBUG("foreground mask: {}/{} pixels filled ({:.1f}%)",
+                              filled, total, 100.0 * filled / total);
+                }
+
                 // Find contours using custom boundary tracing
                 auto contours = processing::find_contours(m_ForegroundMask);
+                LOG_DEBUG("boundary trace: {} contour(s) found", contours.size());
 
                 processing::e_ContourSelector selector;
                 switch (m_SegmentationMode) {
@@ -191,19 +213,41 @@ namespace cc::app {
                     if (maybe_result) {
                         auto& result = *maybe_result;
 
+                        LOG_DEBUG("contour result: {} teeth direct, {} speculative",
+                                  result.m_Teeth.size(), result.m_SpeculativeCount);
+
                         // early exit -- if we have found less than 8 teeth, it's probably not a gear that we found
                         if (result.m_Teeth.size() >= k_MinimumToothCount) {
                             auto tooth_anomaly_mask = processing::find_anomalies(result.m_Teeth);
 
-                            // and display the result in-image at the center of the gear
+                            // Temporal mode filter: accumulate recent counts and display
+                            // the most frequent value to suppress single-frame noise.
+                            auto push = [](std::deque<int>& q, int v, size_t max_size) {
+                                q.push_back(v);
+                                if (q.size() > max_size) q.pop_front();
+                            };
+                            push(m_RecentDirectCounts, static_cast<int>(result.m_Teeth.size()), k_TemporalWindow);
+                            push(m_RecentSpecCounts,   result.m_SpeculativeCount,                k_TemporalWindow);
+
+                            int smoothed_direct = mode_of(m_RecentDirectCounts);
+                            int smoothed_spec   = mode_of(m_RecentSpecCounts);
+
                             display_results(
                                 result.m_Centroid,
                                 result.m_Teeth,
                                 tooth_anomaly_mask,
                                 m_OutputImage,
-                                result.m_SpeculativeCount
+                                smoothed_spec,
+                                smoothed_direct
                             );
                         }
+                        else {
+                            LOG_DEBUG("too few teeth ({} < {}), skipping display",
+                                      result.m_Teeth.size(), k_MinimumToothCount);
+                        }
+                    }
+                    else {
+                        LOG_DEBUG("process_contours returned no result");
                     }
                 }
 
@@ -265,6 +309,19 @@ namespace cc::app {
                             break;
                     }
                     break;
+
+                case 'd':
+                case 'D': {
+                    auto& logger = cc::util::Logger::instance();
+                    if (logger.get_level() == cc::util::LogLevel::DEBUG) {
+                        logger.set_level(cc::util::LogLevel::INFO);
+                        LOG_INFO("Log level: INFO");
+                    } else {
+                        logger.set_level(cc::util::LogLevel::DEBUG);
+                        LOG_DEBUG("Log level: DEBUG");
+                    }
+                    break;
+                }
 
                 case 13: // enter
                     //cycle through shown images

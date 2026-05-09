@@ -95,6 +95,35 @@ namespace cc::processing {
             }
         }
 
+        // Remove noise artifacts: teeth whose span of high-points is implausibly narrow
+        // compared to the median across all detected teeth.
+        if (teeth.size() >= 3) {
+            size_t N = tooth_mask.size();
+
+            std::vector<size_t> spans;
+            spans.reserve(teeth.size());
+            for (const auto& t : teeth) {
+                size_t start = (t.m_LowHighTransitionIdx + 1) % N;
+                size_t end   = t.m_HighLowTransitionIdx;
+                spans.push_back((end >= start) ? (end - start + 1) : (N - start + end + 1));
+            }
+
+            auto sorted_spans = spans;
+            std::sort(sorted_spans.begin(), sorted_spans.end());
+            size_t median_span = sorted_spans[sorted_spans.size() / 2];
+            size_t min_span    = std::max(size_t(1), median_span / 3);
+
+            std::vector<ToothMeasurement> kept;
+            kept.reserve(teeth.size());
+            for (size_t i = 0; i < teeth.size(); ++i) {
+                if (spans[i] >= min_span) {
+                    kept.push_back(teeth[i]);
+                    kept.back().m_ToothIdx = kept.size();
+                }
+            }
+            teeth = std::move(kept);
+        }
+
         return teeth;
     }
 
@@ -161,6 +190,27 @@ namespace cc::processing {
                     best_int_frac = frac;
                 }
             }
+        }
+
+        // Collapse sub-harmonics: if m*best_pitch also fits all spacings as integer
+        // multiples, prefer the larger (coarser) pitch — it is the fundamental.
+        // This prevents e.g. pitch/2 from winning when it ties with the true pitch.
+        {
+            double collapsed = best_pitch;
+            for (int m = 2; m <= k_MaxMultiple; ++m) {
+                double candidate = best_pitch * static_cast<double>(m);
+                if (2.0 * std::numbers::pi / candidate < 2.0) break;
+
+                int inliers = 0;
+                for (double sj : spacings) {
+                    double nearest = std::round(sj / candidate);
+                    if (nearest >= 1.0 && std::abs(sj / candidate - nearest) < k_Tolerance)
+                        ++inliers;
+                }
+                if (inliers >= best_inliers)
+                    collapsed = candidate;
+            }
+            best_pitch = collapsed;
         }
 
         return static_cast<int>(std::round(2.0 * std::numbers::pi / best_pitch));

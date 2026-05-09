@@ -267,6 +267,39 @@ namespace {
     }
 }
 
+// ---------------------------------------------------------------------------
+// count_teeth span filter
+// ---------------------------------------------------------------------------
+
+TEST_CASE("count_teeth - narrow noise spike is filtered out", "[count_teeth]") {
+    // 3 real teeth (span=6 each) plus one 1-point noise spike.
+    // median span=6, min_span=max(1,6/3)=2 → spike(span=1) removed.
+    std::vector<uint8_t> mask = {
+        0, 1, 1, 1, 1, 1, 1, 0,  // tooth 1: span=6
+        0, 1, 0,                  // noise spike: span=1
+        0, 1, 1, 1, 1, 1, 1, 0,  // tooth 2: span=6
+        0, 1, 1, 1, 1, 1, 1, 0   // tooth 3: span=6
+    };
+
+    std::vector<cc::Point2i> contour;
+    std::vector<double> distances;
+    cc::Point2f centroid(100, 100);
+    for (size_t i = 0; i < mask.size(); ++i) {
+        double angle  = (2.0 * std::numbers::pi * i) / mask.size();
+        double radius = mask[i] ? 50.0 : 30.0;
+        contour.push_back({ static_cast<int>(centroid.x + radius * std::cos(angle)),
+                            static_cast<int>(centroid.y + radius * std::sin(angle)) });
+        distances.push_back(radius);
+    }
+
+    auto start = find_tooth_start(mask);
+    REQUIRE(start.has_value());
+    auto teeth = count_teeth(*start, mask, contour, distances, centroid);
+
+    // The noise spike (span=1) is below median(4)/3≈1, so it is filtered.
+    REQUIRE(teeth.size() == 3);
+}
+
 TEST_CASE("estimate_tooth_count - too few teeth returns -1", "[count_teeth]") {
     REQUIRE(estimate_tooth_count({}) == -1);
     REQUIRE(estimate_tooth_count({ tooth_at(0.0) }) == -1);
@@ -288,6 +321,18 @@ TEST_CASE("estimate_tooth_count - RANSAC recovers true count despite missed dete
     // True gear: 12 teeth at 30° pitch.  Detected only 7 of them.
     // All observed spacings (30°, 60°, 90°) are multiples of 30°,
     // so pitch=30° maximises inliers → estimate = 12.
+    auto teeth = teeth_from_degrees({0, 30, 60, 120, 150, 240, 330});
+    REQUIRE(estimate_tooth_count(teeth) == 12);
+}
+
+TEST_CASE("estimate_tooth_count - sub-harmonic collapses to fundamental", "[count_teeth]") {
+    // All spacings are exact multiples of the true pitch, so pitch/2 fits equally
+    // well as multiples of 2×. The collapse step must prefer the larger pitch.
+    // 8 teeth at 45°: pitch/2 = 22.5° also fits every 45° spacing as 2×22.5°.
+    REQUIRE(estimate_tooth_count(teeth_from_degrees({0, 45, 90, 135, 180, 225, 270, 315})) == 8);
+
+    // With missed teeth, spacings are mixed (30°, 60°, 90°) — all multiples of 30°.
+    // pitch/2=15° also fits each as 2×, 4×, 6× of 15°. Collapse must return 12.
     auto teeth = teeth_from_degrees({0, 30, 60, 120, 150, 240, 330});
     REQUIRE(estimate_tooth_count(teeth) == 12);
 }

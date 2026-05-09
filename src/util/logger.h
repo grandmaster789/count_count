@@ -4,6 +4,7 @@
 #include <string>
 #include <format>
 #include <iomanip>
+#include <fstream>
 #include <iostream>
 
 namespace cc::util {
@@ -18,6 +19,9 @@ namespace cc::util {
     };
 
     class Logger {
+    private:
+        std::ofstream m_log_file = std::ofstream("cc.log");
+
     public:
         static Logger& instance() { static Logger x; return x; }
 
@@ -29,6 +33,8 @@ namespace cc::util {
             if (level >= m_level) {
                 auto message = std::format(format, std::forward<Args>(args)...);
                 std::cout << "[" << level_to_string(level) << "] " << message << std::endl;
+                if (m_log_file.is_open())
+                    m_log_file << "[" << level_to_string(level) << "] " << message << std::endl;
             }
         }
 

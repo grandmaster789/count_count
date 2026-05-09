@@ -21,7 +21,8 @@ namespace cc {
         const std::vector<ToothMeasurement>& teeth,
         const std::vector<uint8_t>&          tooth_anomaly_mask,
         cc::Image&                           output_image,
-        int                                  speculative_count = -1
+        int                                  speculative_count = -1,
+        int                                  direct_count      = -1
     );
 }
 

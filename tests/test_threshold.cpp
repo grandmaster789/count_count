@@ -52,6 +52,48 @@ TEST_CASE("Percentile threshold - single value", "[threshold]") {
     REQUIRE(cc::math::percentile_threshold(distances) == 42.0);
 }
 
+// ---------------------------------------------------------------------------
+// otsu_threshold
+// ---------------------------------------------------------------------------
+
+TEST_CASE("otsu_threshold - bimodal distribution lands between clusters", "[threshold]") {
+    // 50 points near 30 (gaps, values 29–31) + 50 points near 50 (teeth, values 49–51)
+    std::vector<double> distances;
+    for (int i = 0; i < 50; ++i) distances.push_back(29.0 + (i % 3));
+    for (int i = 0; i < 50; ++i) distances.push_back(49.0 + (i % 3));
+
+    double t = cc::math::otsu_threshold(distances);
+    REQUIRE(t > 31.0); // above the top of the lower cluster (31)
+    REQUIRE(t < 49.0); // below the bottom of the upper cluster (49)
+}
+
+TEST_CASE("otsu_threshold - separates shallow bimodal better than midpoint", "[threshold]") {
+    // Simulate shallow-toothed gear: most points are near root (~200, values 200–204),
+    // a minority are at tooth tips (~225–228). Otsu should place threshold above the
+    // root cluster and below the tip cluster.
+    std::vector<double> distances;
+    for (int i = 0; i < 100; ++i) distances.push_back(200.0 + (i % 5));  // root cluster: 200–204
+    for (int i = 0; i <  40; ++i) distances.push_back(225.0 + (i % 4));  // tip cluster:  225–228
+
+    double t = cc::math::otsu_threshold(distances);
+    REQUIRE(t > 204.0); // above the top of the root cluster (204)
+    REQUIRE(t < 225.0); // below the bottom of the tip cluster (225)
+}
+
+TEST_CASE("otsu_threshold - single value returns that value", "[threshold]") {
+    REQUIRE(cc::math::otsu_threshold(std::vector<double>{42.0}) == Catch::Approx(42.0));
+}
+
+TEST_CASE("otsu_threshold - uniform distribution returns midpoint", "[threshold]") {
+    std::vector<double> distances;
+    for (int i = 0; i <= 100; ++i)
+        distances.push_back(static_cast<double>(i));
+
+    double t = cc::math::otsu_threshold(distances);
+    REQUIRE(t > 30.0);
+    REQUIRE(t < 70.0);
+}
+
 TEST_CASE("Percentile vs midpoint with outliers", "[threshold]") {
     // Bimodal distribution with injected outliers
     std::vector<double> distances = {

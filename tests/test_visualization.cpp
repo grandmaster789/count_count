@@ -119,6 +119,25 @@ TEST_CASE("display_results - speculative count label is wider than matching coun
     REQUIRE(pixels_spec > pixels_match);
 }
 
+TEST_CASE("display_results - direct_count overrides teeth.size() in displayed label", "[visualization]") {
+    // With direct_count=72 and teeth.size()=8, "72/72" has more characters than "8/8"
+    // so it should produce more non-white pixels near the centroid.
+    auto teeth = uniform_teeth(8);
+    std::vector<uint8_t> anomaly_mask(teeth.size(), cc::ToothAnomaly::none);
+    cc::Point2i centroid{150, 150};
+
+    cc::Image img_default   = white_image(300, 300);
+    cc::Image img_overridden = white_image(300, 300);
+
+    cc::display_results(centroid, teeth, anomaly_mask, img_default,    -1, -1); // "8/8"
+    cc::display_results(centroid, teeth, anomaly_mask, img_overridden, -1, 72); // "72/72"
+
+    int pixels_default    = count_non_white_near(img_default,    150, 150, 100);
+    int pixels_overridden = count_non_white_near(img_overridden, 150, 150, 100);
+
+    REQUIRE(pixels_overridden > pixels_default);
+}
+
 TEST_CASE("display_results - anomaly arrows drawn when anomalies present", "[visualization]") {
     auto teeth = uniform_teeth(8);
     std::vector<uint8_t> no_anomalies(teeth.size(), cc::ToothAnomaly::none);

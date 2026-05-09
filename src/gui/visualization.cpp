@@ -51,7 +51,8 @@ namespace cc {
         const std::vector<cc::ToothMeasurement>& teeth,
         const std::vector<uint8_t>&              tooth_anomaly_mask,
         cc::Image&                               output_image,
-        int                                      speculative_count
+        int                                      speculative_count,
+        int                                      direct_count
     ) {
         // Scale font relative to image height so text is readable at any resolution
         double k_FontScale     = std::max(2.0, output_image.rows() / 100.0);
@@ -132,11 +133,15 @@ namespace cc {
         bool has_anomaly = (num_gap_anomalies > 0 || num_arc_anomalies > 0);
         size_t expected_count = teeth.size() + num_gap_anomalies + num_arc_anomalies;
 
+        // Prefer the temporally-smoothed direct count when available (no anomalies).
+        int effective_direct = (direct_count >= 0 && !has_anomaly)
+            ? direct_count
+            : static_cast<int>(teeth.size());
+
         // Use the speculative count when it differs meaningfully from the direct count
         // (more than 10% off). The direct count understates when adjacent teeth merge.
         bool use_speculative = speculative_count > 0 &&
-            std::abs(speculative_count - static_cast<int>(teeth.size())) >
-            static_cast<int>(teeth.size()) / 10;
+            std::abs(speculative_count - effective_direct) > effective_direct / 10;
 
         std::string message;
         if (has_anomaly) {
@@ -144,9 +149,9 @@ namespace cc {
             if (use_speculative)
                 message += std::format(" (~{})", speculative_count);
         } else if (use_speculative) {
-            message = std::format("{} (~{})", teeth.size(), speculative_count);
+            message = std::format("{} (~{})", effective_direct, speculative_count);
         } else {
-            message = std::format("{}/{}", teeth.size(), teeth.size());
+            message = std::format("{}/{}", effective_direct, effective_direct);
         }
 
         auto text_size = drawing::measure_text(message, k_FontScale);

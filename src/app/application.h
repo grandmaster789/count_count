@@ -1,6 +1,7 @@
 #ifndef CC_APP_APPLICATION_H
 #define CC_APP_APPLICATION_H
 
+#include <deque>
 #include <filesystem>
 
 #include "types/image.h"
@@ -40,12 +41,16 @@ namespace cc::app {
             background_subtraction
         } m_SegmentationMode = e_SegmentationMode::color_threshold;
 
-        static constexpr const size_t k_MinimumToothCount = 8;
+        static constexpr size_t k_MinimumToothCount = 8;
+        static constexpr size_t k_TemporalWindow    = 10;
 
         enum class e_ShowImage {
             processed_image,
             foreground
         } m_Show = e_ShowImage::processed_image;
+
+        std::deque<int> m_RecentDirectCounts;
+        std::deque<int> m_RecentSpecCounts;
 
         cc::Image m_SourceImage;    // BGR
         cc::Image m_OutputImage;    // BGR  — reused each frame

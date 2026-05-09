@@ -7,7 +7,9 @@
 #include "math/geometry.h"
 #include "math/statistics.h"
 #include "types/tooth_measurement.h"
+#include "util/logger.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -104,6 +106,15 @@ namespace cc::processing {
         double image_area = static_cast<double>(output_image.rows()) * output_image.cols();
         double min_area   = image_area * 0.01;
 
+        LOG_DEBUG("contours: {} candidates, image area={:.0f}, min_area={:.0f}",
+                  all_contours.size(), image_area, min_area);
+
+        for (size_t i = 0; i < all_contours.size(); ++i) {
+            double a = cc::math::polygon_area(all_contours[i]);
+            LOG_DEBUG("  contour[{}]: {} pts, area={:.0f}{}", i, all_contours[i].size(), a,
+                      a < min_area ? " (below threshold)" : "");
+        }
+
         int chosen_idx;
         switch (selector) {
             case e_ContourSelector::most_circular:
@@ -119,10 +130,13 @@ namespace cc::processing {
                 break;
         }
 
-        if (chosen_idx < 0)
+        if (chosen_idx < 0) {
+            LOG_DEBUG("contours: no contour passed the selector");
             return std::nullopt;
+        }
 
         const auto& largest_contour = all_contours[chosen_idx];
+        LOG_DEBUG("contours: selected contour[{}] ({} pts)", chosen_idx, largest_contour.size());
 
         // draw contour onto output image (red)
         for (size_t i = 0; i < largest_contour.size(); ++i) {
@@ -149,16 +163,30 @@ namespace cc::processing {
             distances.push_back(distance);
         }
 
-        auto distance_threshold = cc::math::percentile_threshold(distances);
+        double dist_min = *std::min_element(distances.begin(), distances.end());
+        double dist_max = *std::max_element(distances.begin(), distances.end());
+        auto distance_threshold = cc::math::otsu_threshold(distances);
+
+        LOG_DEBUG("contours: centroid=({},{}), dist min={:.1f} max={:.1f} threshold={:.1f} swing={:.1f}",
+                  centroid_i.x, centroid_i.y,
+                  dist_min, dist_max, distance_threshold, dist_max - dist_min);
 
         std::vector<uint8_t> tooth_mask(largest_contour.size(), 0);
 
         for (size_t i = 0; i < largest_contour.size(); ++i)
             tooth_mask[i] = (distances[i] >= distance_threshold) ? 1 : 0;
 
+        int high_count = static_cast<int>(std::count(tooth_mask.begin(), tooth_mask.end(), 1));
+        LOG_DEBUG("contours: tooth_mask high={} ({:.0f}% of {} pts)",
+                  high_count,
+                  100.0 * high_count / static_cast<double>(tooth_mask.size()),
+                  tooth_mask.size());
+
         auto first_tooth = find_tooth_start(tooth_mask);
-        if (!first_tooth)
+        if (!first_tooth) {
+            LOG_DEBUG("contours: no tooth start found");
             return std::nullopt;
+        }
 
         auto teeth = count_teeth(
             *first_tooth,
@@ -169,6 +197,7 @@ namespace cc::processing {
         );
 
         int speculative = estimate_tooth_count(teeth);
+        LOG_DEBUG("contours: direct={} speculative={}", teeth.size(), speculative);
 
         return ContourResult {
             .m_Teeth           = std::move(teeth),
