@@ -128,8 +128,9 @@ namespace cc::processing {
         constexpr int    k_MaxMultiple = 5;
         constexpr double k_Tolerance   = 0.25; // fraction of candidate pitch
 
-        double best_pitch   = spacings[0];
-        int    best_inliers = 0;
+        double best_pitch    = spacings[0];
+        int    best_inliers  = 0;
+        double best_int_frac = 1.0; // distance of 2π/pitch from the nearest integer
 
         for (double s : spacings) {
             for (int k = 1; k <= k_MaxMultiple; ++k) {
@@ -143,10 +144,21 @@ namespace cc::processing {
                         ++inliers;
                 }
 
-                // More inliers wins; ties broken by larger pitch (= fewer teeth, more conservative)
-                if (inliers > best_inliers || (inliers == best_inliers && candidate > best_pitch)) {
-                    best_inliers = inliers;
-                    best_pitch   = candidate;
+                // How close is 2π/candidate to an integer? A real gear always has an
+                // integer tooth count, so this distinguishes the true pitch (frac≈0)
+                // from nearby spurious candidates (frac>0) when inlier counts tie.
+                double full_turns = 2.0 * std::numbers::pi / candidate;
+                double frac = std::abs(std::fmod(full_turns, 1.0));
+                if (frac > 0.5) frac = 1.0 - frac; // distance to nearest integer
+
+                // Priority: 1) more inliers  2) pitch divides 2π more evenly  3) larger pitch
+                if (inliers > best_inliers ||
+                    (inliers == best_inliers && frac < best_int_frac) ||
+                    (inliers == best_inliers && frac == best_int_frac && candidate > best_pitch))
+                {
+                    best_inliers  = inliers;
+                    best_pitch    = candidate;
+                    best_int_frac = frac;
                 }
             }
         }

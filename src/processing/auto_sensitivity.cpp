@@ -1,0 +1,184 @@
+#include "auto_sensitivity.h"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <vector>
+
+namespace {
+    constexpr int k_HistBins       = 32;
+    constexpr int k_HistTotal      = k_HistBins * k_HistBins * k_HistBins; // 32768
+    constexpr int k_Subsample      = 4;
+    constexpr int k_SuppressRadius = 2;
+
+    cc::Color3 find_background_color(const cc::Image& image) {
+        std::vector<int> histogram(k_HistTotal, 0);
+
+        for (int y = 0; y < image.rows(); y += k_Subsample) {
+            const uint8_t* row = image.ptr(y);
+            for (int x = 0; x < image.cols(); x += k_Subsample) {
+                const uint8_t* px = row + static_cast<size_t>(x) * 3;
+                int bi = px[0] >> 3;
+                int gi = px[1] >> 3;
+                int ri = px[2] >> 3;
+                histogram[static_cast<size_t>(bi) * k_HistBins * k_HistBins +
+                          static_cast<size_t>(gi) * k_HistBins + ri]++;
+            }
+        }
+
+        auto it  = std::max_element(histogram.begin(), histogram.end());
+        auto idx = static_cast<size_t>(std::distance(histogram.begin(), it));
+
+        int b = static_cast<int>(idx / (k_HistBins * k_HistBins));
+        int g = static_cast<int>((idx / k_HistBins) % k_HistBins);
+        int r = static_cast<int>(idx % k_HistBins);
+
+        return cc::Color3(b * 8 + 4, g * 8 + 4, r * 8 + 4);
+    }
+
+    cc::Color3 find_dominant_color(const cc::Image& image) {
+        std::vector<int> histogram(k_HistTotal, 0);
+
+        for (int y = 0; y < image.rows(); y += k_Subsample) {
+            const uint8_t* row = image.ptr(y);
+            for (int x = 0; x < image.cols(); x += k_Subsample) {
+                const uint8_t* px = row + static_cast<size_t>(x) * 3;
+                int bi = px[0] >> 3;
+                int gi = px[1] >> 3;
+                int ri = px[2] >> 3;
+                histogram[static_cast<size_t>(bi) * k_HistBins * k_HistBins +
+                          static_cast<size_t>(gi) * k_HistBins + ri]++;
+            }
+        }
+
+        // Find background peak (highest count)
+        auto bg_it  = std::max_element(histogram.begin(), histogram.end());
+        auto bg_idx = static_cast<size_t>(std::distance(histogram.begin(), bg_it));
+
+        int bg_b = static_cast<int>(bg_idx / (k_HistBins * k_HistBins));
+        int bg_g = static_cast<int>((bg_idx / k_HistBins) % k_HistBins);
+        int bg_r = static_cast<int>(bg_idx % k_HistBins);
+
+        // Suppress region around background peak
+        for (int db = -k_SuppressRadius; db <= k_SuppressRadius; ++db) {
+            for (int dg = -k_SuppressRadius; dg <= k_SuppressRadius; ++dg) {
+                for (int dr = -k_SuppressRadius; dr <= k_SuppressRadius; ++dr) {
+                    int b = bg_b + db;
+                    int g = bg_g + dg;
+                    int r = bg_r + dr;
+                    if (b >= 0 && b < k_HistBins &&
+                        g >= 0 && g < k_HistBins &&
+                        r >= 0 && r < k_HistBins)
+                    {
+                        histogram[static_cast<size_t>(b) * k_HistBins * k_HistBins +
+                                  static_cast<size_t>(g) * k_HistBins + r] = 0;
+                    }
+                }
+            }
+        }
+
+        // Find foreground peak (next highest)
+        auto fg_it  = std::max_element(histogram.begin(), histogram.end());
+
+        // If no second peak exists, return black (will fail validation)
+        if (*fg_it == 0)
+            return { 0, 0, 0 };
+
+        auto fg_idx = static_cast<size_t>(std::distance(histogram.begin(), fg_it));
+
+        int fg_b = static_cast<int>(fg_idx / (k_HistBins * k_HistBins));
+        int fg_g = static_cast<int>((fg_idx / k_HistBins) % k_HistBins);
+        int fg_r = static_cast<int>(fg_idx % k_HistBins);
+
+        // Bin center = bin_index * 8 + 4
+        return cc::Color3(fg_b * 8 + 4, fg_g * 8 + 4, fg_r * 8 + 4);
+    }
+
+    int find_optimal_tolerance(const cc::Image& image, const cc::Color3& target_color) {
+        std::array<int, 256> dist_hist {};
+
+        int ref_b = static_cast<int>(target_color.b);
+        int ref_g = static_cast<int>(target_color.g);
+        int ref_r = static_cast<int>(target_color.r);
+        int total_pixels = 0;
+
+        for (int y = 0; y < image.rows(); y += k_Subsample) {
+            const uint8_t* row = image.ptr(y);
+            for (int x = 0; x < image.cols(); x += k_Subsample) {
+                const uint8_t* px = row + static_cast<size_t>(x) * 3;
+                int db = std::abs(static_cast<int>(px[0]) - ref_b);
+                int dg = std::abs(static_cast<int>(px[1]) - ref_g);
+                int dr = std::abs(static_cast<int>(px[2]) - ref_r);
+                int dist = std::max({ db, dg, dr });
+                dist_hist[static_cast<size_t>(dist)]++;
+                total_pixels++;
+            }
+        }
+
+        if (total_pixels == 0)
+            return 0;
+
+        // Otsu's method: find threshold maximizing between-class variance
+        double total_sum = 0.0;
+        for (int i = 0; i < 256; ++i)
+            total_sum += static_cast<double>(i) * dist_hist[static_cast<size_t>(i)];
+
+        double best_variance = 0.0;
+        int    best_threshold = 0;
+        double w0   = 0.0;
+        double sum0 = 0.0;
+
+        for (int t = 0; t < 255; ++t) {
+            w0   += dist_hist[static_cast<size_t>(t)];
+            sum0 += static_cast<double>(t) * dist_hist[static_cast<size_t>(t)];
+
+            if (w0 == 0.0)
+                continue;
+
+            double w1 = total_pixels - w0;
+            if (w1 == 0.0)
+                break;
+
+            double mean0 = sum0 / w0;
+            double mean1 = (total_sum - sum0) / w1;
+            double between_variance = w0 * w1 * (mean0 - mean1) * (mean0 - mean1);
+
+            if (between_variance > best_variance) {
+                best_variance  = between_variance;
+                best_threshold = t;
+            }
+        }
+
+        // tolerance = 2 * threshold (determine_color_range uses +/- tolerance/2)
+        return std::min(best_threshold * 2, 255);
+    }
+}
+
+namespace cc::processing {
+    AutoSensitivityResult detect_sensitivity(const cc::Image& source_image) {
+        if (source_image.empty() || source_image.channels() != 3)
+            return { {}, 0, false };
+
+        auto color     = find_dominant_color(source_image);
+        int  tolerance = find_optimal_tolerance(source_image, color);
+
+        bool valid = tolerance > 0 && tolerance <= 255;
+        return { color, tolerance, valid };
+    }
+
+    AutoSensitivityResult detect_background_sensitivity(const cc::Image& source_image) {
+        if (source_image.empty() || source_image.channels() != 3)
+            return { {}, 0, false };
+
+        auto color     = find_background_color(source_image);
+        int  tolerance = find_optimal_tolerance(source_image, color);
+
+        // Otsu returns 0 when the background is perfectly uniform (all pixels at
+        // distance 0 from the target).  Apply a floor of one histogram bin width
+        // (8 values) so the result is always usable.
+        tolerance = std::max(tolerance, 8);
+
+        bool valid = tolerance > 0 && tolerance <= 255;
+        return { color, tolerance, valid };
+    }
+}

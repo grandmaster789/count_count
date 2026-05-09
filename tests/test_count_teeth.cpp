@@ -244,3 +244,59 @@ TEST_CASE("find_tooth_start - two element mask", "[count_teeth]") {
         REQUIRE(result.value() == 1); // wraps: mask[1]=0, mask[0]=1
     }
 }
+
+// ---------------------------------------------------------------------------
+// estimate_tooth_count
+// ---------------------------------------------------------------------------
+
+namespace {
+    cc::ToothMeasurement tooth_at(double angle_rad) {
+        cc::ToothMeasurement t;
+        t.m_StartingAngle = angle_rad;
+        t.m_EndingAngle   = angle_rad;
+        t.m_MinDistance   = 40.0;
+        t.m_MaxDistance   = 50.0;
+        return t;
+    }
+
+    std::vector<cc::ToothMeasurement> teeth_from_degrees(std::initializer_list<double> degrees) {
+        std::vector<cc::ToothMeasurement> v;
+        for (double d : degrees)
+            v.push_back(tooth_at(d * std::numbers::pi / 180.0));
+        return v;
+    }
+}
+
+TEST_CASE("estimate_tooth_count - too few teeth returns -1", "[count_teeth]") {
+    REQUIRE(estimate_tooth_count({}) == -1);
+    REQUIRE(estimate_tooth_count({ tooth_at(0.0) }) == -1);
+}
+
+TEST_CASE("estimate_tooth_count - exact uniform spacing", "[count_teeth]") {
+    // 8 teeth at 45° each → estimate = 8
+    REQUIRE(estimate_tooth_count(teeth_from_degrees({0, 45, 90, 135, 180, 225, 270, 315})) == 8);
+    // 12 teeth at 30° each → estimate = 12
+    REQUIRE(estimate_tooth_count(teeth_from_degrees({0,30,60,90,120,150,180,210,240,270,300,330})) == 12);
+}
+
+TEST_CASE("estimate_tooth_count - two teeth 180 deg apart", "[count_teeth]") {
+    // Both spacings are 180° → pitch=180° → count=2
+    REQUIRE(estimate_tooth_count(teeth_from_degrees({0, 180})) == 2);
+}
+
+TEST_CASE("estimate_tooth_count - RANSAC recovers true count despite missed detections", "[count_teeth]") {
+    // True gear: 12 teeth at 30° pitch.  Detected only 7 of them.
+    // All observed spacings (30°, 60°, 90°) are multiples of 30°,
+    // so pitch=30° maximises inliers → estimate = 12.
+    auto teeth = teeth_from_degrees({0, 30, 60, 120, 150, 240, 330});
+    REQUIRE(estimate_tooth_count(teeth) == 12);
+}
+
+TEST_CASE("estimate_tooth_count - spurious near-pitch detection resolved by larger-pitch tie-break", "[count_teeth]") {
+    // True pitch 45° (8 teeth).  One detection shifted to 41° instead of 45°.
+    // Spacings: 41, 49, 45, 45, 45, 45, 45, 45 degrees.
+    // Both pitch=45° and pitch=41° collect 8 inliers (all within 25% tolerance).
+    // Tie broken by larger pitch → 45° wins → estimate = 8.
+    auto teeth = teeth_from_degrees({0, 41, 90, 135, 180, 225, 270, 315});
+    REQUIRE(estimate_tooth_count(teeth) == 8);
+}
