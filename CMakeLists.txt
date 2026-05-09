@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.12)
 
 set(CMAKE_TOOLCHAIN_FILE "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "Vcpkg toolchain file")
 
@@ -7,7 +7,6 @@ project(CountVonCount LANGUAGES CXX VERSION 0.0.1)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(OpenCV REQUIRED)
 find_package(Stb REQUIRED)
 find_package(Catch2 3 REQUIRED)
 
@@ -38,48 +37,46 @@ file(GLOB_RECURSE CountUnitTestSources CONFIGURE_DEPENDS
 target_sources            (CountVonCount PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
 target_include_directories(CountVonCount PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
-        ${OpenCV_INCLUDE_DIRS}
         ${Stb_INCLUDE_DIR}
 )
-target_link_libraries     (CountVonCount PRIVATE CountVonCountLib
-        ${OpenCV_LIBS}
-)
+target_link_libraries     (CountVonCount PRIVATE CountVonCountLib)
 
 # ----------- Project code -----------------
 target_sources            (CountVonCountLib PRIVATE ${CountLibSources})
 target_include_directories(CountVonCountLib PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
-        ${OpenCV_INCLUDE_DIRS}
         ${Stb_INCLUDE_DIR}
 )
-target_link_libraries     (CountVonCountLib PRIVATE
-        ${OpenCV_LIBS}
-)
-target_link_directories   (CountVonCountLib PRIVATE
-        ${OpenCV_LIB_DIR}
-)
+
+if (WIN32)
+    target_link_libraries(CountVonCountLib PRIVATE
+        mfplat mf mfreadwrite mfuuid
+        comctl32
+    )
+endif()
 
 # ----------- Test code --------------------
 target_sources            (CountVonCountTests PRIVATE ${CountUnitTestSources})
 target_include_directories(CountVonCountTests PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests"
-        ${OpenCV_INCLUDE_DIRS}
         ${Stb_INCLUDE_DIR}
 )
 target_link_libraries     (CountVonCountTests PRIVATE
-        ${OpenCV_LIBS}
         Catch2::Catch2WithMain
         CountVonCountLib
-)
-target_link_directories   (CountVonCountTests PRIVATE
-        ${OpenCV_LIB_DIR}
 )
 
 
 if (MSVC)
     target_compile_definitions(CountVonCountLib   PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_definitions(CountVonCountTests PRIVATE _CRT_SECURE_NO_WARNINGS)
+
+    target_compile_options(CountVonCount PRIVATE
+            /W4     # Enable all warnings
+            /WX     # Warnings as errors
+            /MP     # Enable multi-processor compilation
+    )
 
     target_compile_options(CountVonCountLib PRIVATE
             /W4     # Enable all warnings
@@ -98,6 +95,13 @@ if (MSVC)
     #target_link_options(CountVonCount PRIVATE /SUBSYSTEM:WINDOWS /entry:mainCRTStartup)
 else()
     # technically these are for gcc and clang only
+    target_compile_options(CountVonCount PRIVATE
+            -Wall      # Enable all warnings
+            -Wextra    # Enable extra warnings
+            -Werror    # Warnings as errors
+            -Wpedantic # Enable pedantic warnings
+    )
+
     target_compile_options(CountVonCountLib PRIVATE
             -Wall      # Enable all warnings
             -Wextra    # Enable extra warnings

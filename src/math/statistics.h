@@ -15,6 +15,10 @@ namespace cc::math {
     template <typename T>
     [[nodiscard]]
     double calculate_standard_deviation(const std::vector<T>& values);
+
+    template <typename T>
+    [[nodiscard]]
+    double percentile_threshold(std::vector<T> values);
 }
 
 #include "statistics.inl"

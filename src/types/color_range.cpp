@@ -2,8 +2,8 @@
 
 namespace cc {
     ColorRange determine_color_range(
-        const cv::Scalar& selected_color,
-        int               tolerance_range
+        const Color3& selected_color,
+        int           tolerance_range
     ) {
         ColorRange result;
 

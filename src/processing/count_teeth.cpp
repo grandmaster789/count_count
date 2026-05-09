@@ -1,5 +1,6 @@
 #include "count_teeth.h"
 
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 
@@ -26,9 +27,9 @@ namespace cc::processing {
     std::vector<ToothMeasurement> count_teeth(
               size_t                         first_tooth_idx,
         const std::vector<uint8_t>&          tooth_mask,
-        const std::vector<cv::Point>&        largest_contour,
+        const std::vector<cc::Point2i>&      largest_contour,
         const std::vector<double>&           distances,
-        const cv::Point2f&                   centroid_f
+        const cc::Point2f&                   centroid_f
     ) {
         int tooth_count = 0;
 
@@ -71,27 +72,85 @@ namespace cc::processing {
                 if (measurement.m_EndingAngle < 0)
                     measurement.m_EndingAngle += 2 * std::numbers::pi;
 
-                // because of the wrapping structure, this is actually challenging for std::minmax_element...
                 measurement.m_MinDistance =  std::numeric_limits<double>::max();
                 measurement.m_MaxDistance = -std::numeric_limits<double>::max();
 
                 // find the min and max distances for this tooth
-                // at the low->high transition index the distance should still be low, so start at the next index
-                // at the high->low transition index the distance should still be high
-                for (
-                    size_t j = (measurement.m_LowHighTransitionIdx + 1) % tooth_mask.size();
-                           j <= measurement.m_HighLowTransitionIdx;
-                    ++j, j %= tooth_mask.size()
-                ) {
-                    if (distances[j] < measurement.m_MinDistance)
-                        measurement.m_MinDistance = distances[j];
+                // walk forward from (LowHigh+1) to HighLow, wrapping around if needed
+                {
+                    size_t start = (measurement.m_LowHighTransitionIdx + 1) % tooth_mask.size();
+                    size_t end   = measurement.m_HighLowTransitionIdx;
+                    size_t n     = tooth_mask.size();
+                    size_t span  = (end >= start) ? (end - start + 1) : (n - start + end + 1);
 
-                    if (distances[j] > measurement.m_MaxDistance)
-                        measurement.m_MaxDistance = distances[j];
+                    size_t j = start;
+                    for (size_t step = 0; step < span; ++step) {
+                        if (distances[j] < measurement.m_MinDistance)
+                            measurement.m_MinDistance = distances[j];
+                        if (distances[j] > measurement.m_MaxDistance)
+                            measurement.m_MaxDistance = distances[j];
+                        j = (j + 1) % n;
+                    }
                 }
             }
         }
 
         return teeth;
+    }
+
+    int estimate_tooth_count(const std::vector<ToothMeasurement>& teeth) {
+        if (teeth.size() < 2)
+            return -1;
+
+        std::vector<double> angles;
+        angles.reserve(teeth.size());
+        for (const auto& t : teeth)
+            angles.push_back(t.m_StartingAngle);
+        std::sort(angles.begin(), angles.end());
+
+        std::vector<double> spacings;
+        spacings.reserve(angles.size());
+        for (size_t i = 0; i < angles.size(); ++i) {
+            double delta = angles[(i + 1) % angles.size()] - angles[i];
+            if (delta <= 0.0) delta += 2.0 * std::numbers::pi;
+            spacings.push_back(delta);
+        }
+
+        // RANSAC-style pitch estimation.
+        //
+        // For each observed spacing s (and sub-harmonics s/k), treat it as a candidate
+        // pitch. Count inliers: other spacings within 25% of a positive integer multiple
+        // of that pitch. The true pitch explains ALL spacings (as multiples 1×, 2×, 3×...),
+        // while a spurious sub-pitch only fits the handful of spacings near that value.
+        //
+        // Tie-breaking by larger pitch prevents a sub-harmonic (e.g. pitch/2) from
+        // winning when it ties with the true pitch on inlier count.
+        constexpr int    k_MaxMultiple = 5;
+        constexpr double k_Tolerance   = 0.25; // fraction of candidate pitch
+
+        double best_pitch   = spacings[0];
+        int    best_inliers = 0;
+
+        for (double s : spacings) {
+            for (int k = 1; k <= k_MaxMultiple; ++k) {
+                double candidate = s / static_cast<double>(k);
+                if (candidate < 1e-6) continue;
+
+                int inliers = 0;
+                for (double sj : spacings) {
+                    double nearest = std::round(sj / candidate);
+                    if (nearest >= 1.0 && std::abs(sj / candidate - nearest) < k_Tolerance)
+                        ++inliers;
+                }
+
+                // More inliers wins; ties broken by larger pitch (= fewer teeth, more conservative)
+                if (inliers > best_inliers || (inliers == best_inliers && candidate > best_pitch)) {
+                    best_inliers = inliers;
+                    best_pitch   = candidate;
+                }
+            }
+        }
+
+        return static_cast<int>(std::round(2.0 * std::numbers::pi / best_pitch));
     }
 }

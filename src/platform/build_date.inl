@@ -15,7 +15,7 @@ namespace cc {
         // - Bytes 0-2 indicate month, as provided by asctime:
         //   https://en.cppreference.com/w/cpp/chrono/c/asctime
         //
-        //   Jan | Feb | Mar | Apr | May | Jun | Jul | Aug | Sep | Okt | Nov | Dec
+        //   Jan | Feb | Mar | Apr | May | Jun | Jul | Aug | Sep | Oct | Nov | Dec
         //   ----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----
         //     1 |   2 |   3 |   4 |   5 |   6 |   7 |   8 |   9 |  10 |  11 |  12
 
@@ -30,7 +30,7 @@ namespace cc {
                 if constexpr (__DATE__[0] == 'J' && __DATE__[1] == 'u' && __DATE__[2] == 'l') return 7u;
                 if constexpr (__DATE__[0] == 'A' && __DATE__[1] == 'u' && __DATE__[2] == 'g') return 8u;
                 if constexpr (__DATE__[0] == 'S' && __DATE__[1] == 'e' && __DATE__[2] == 'p') return 9u;
-                if constexpr (__DATE__[0] == 'O' && __DATE__[1] == 'k' && __DATE__[2] == 't') return 10u;
+                if constexpr (__DATE__[0] == 'O' && __DATE__[1] == 'c' && __DATE__[2] == 't') return 10u;
                 if constexpr (__DATE__[0] == 'N' && __DATE__[1] == 'o' && __DATE__[2] == 'v') return 11u;
                 if constexpr (__DATE__[0] == 'D' && __DATE__[1] == 'e' && __DATE__[2] == 'c') return 12u;
 

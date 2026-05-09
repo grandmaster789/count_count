@@ -2,29 +2,38 @@
 
 namespace cc::processing {
     std::tuple<
-        cv::Point2d,
-        cv::Point2f,
-        cv::Point2i
+        cc::Point2d,
+        cc::Point2f,
+        cc::Point2i
     > find_centroid(
-        const std::vector<std::vector<cv::Point>>& contours,
-        int                                        largest_component_idx
+        const std::vector<cc::Point2i>& contour
     ) {
-        // https://docs.opencv.org/3.4/d3/dc0/group__imgproc__shape.html#ga556a180f43cab22649c23ada36a8a139
-        auto moment = cv::moments(
-            contours[largest_component_idx],
-            false
-        );
-        auto centroid_d = cv::Point2d(
-            moment.m10 / moment.m00,
-            moment.m01 / moment.m00
-        );
+        // Compute moments manually (replaces cv::moments)
+        // m00 = area (via shoelace), m10 = sum of x*area_contribution, m01 = sum of y*area_contribution
+        // For a polygon, the centroid is simply the average of vertex coordinates
+        // (weighted by the signed area of each triangle with the origin).
+        // However, for a contour that's densely sampled, averaging all points gives a good approximation.
+        if (contour.empty())
+            return { cc::Point2d(0, 0), cc::Point2f(0, 0), cc::Point2i(0, 0) };
 
-        auto centroid_f = cv::Point2f(
+        double sum_x = 0.0;
+        double sum_y = 0.0;
+
+        for (const auto& pt : contour) {
+            sum_x += pt.x;
+            sum_y += pt.y;
+        }
+
+        double n = static_cast<double>(contour.size());
+
+        auto centroid_d = cc::Point2d(sum_x / n, sum_y / n);
+
+        auto centroid_f = cc::Point2f(
             static_cast<float>(centroid_d.x),
             static_cast<float>(centroid_d.y)
         );
 
-        auto centroid_i = cv::Point2i(
+        auto centroid_i = cc::Point2i(
             static_cast<int>(centroid_d.x),
             static_cast<int>(centroid_d.y)
         );

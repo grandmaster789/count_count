@@ -1,5 +1,5 @@
-#ifndef MATH_SQUARE_H
-#define MATH_SQUARE_H
+#ifndef CC_MATH_SQUARE_H
+#define CC_MATH_SQUARE_H
 
 namespace cc {
     template <typename T>

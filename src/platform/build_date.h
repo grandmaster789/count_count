@@ -1,5 +1,5 @@
-#ifndef COUNTVONCOUNT_BUILD_DATE_H
-#define COUNTVONCOUNT_BUILD_DATE_H
+#ifndef CC_PLATFORM_BUILD_DATE_H
+#define CC_PLATFORM_BUILD_DATE_H
 
 #include <chrono>
 
@@ -11,4 +11,4 @@ namespace cc {
 
 #include "build_date.inl"
 
-#endif //COUNTVONCOUNT_BUILD_DATE_H
+#endif

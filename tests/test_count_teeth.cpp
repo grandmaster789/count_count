@@ -1,7 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 
-#include <opencv2/opencv.hpp>
 #include <cmath>
 #include <numbers>
 
@@ -62,9 +61,9 @@ TEST_CASE("find_tooth_start - multiple transitions", "[count_teeth]") {
 
 TEST_CASE("count_teeth - empty mask", "[count_teeth]") {
     std::vector<uint8_t> empty_mask;
-    std::vector<cv::Point> contour;
+    std::vector<cc::Point2i> contour;
     std::vector<double> distances;
-    cv::Point2f centroid(0, 0);
+    cc::Point2f centroid(0, 0);
 
     auto teeth = count_teeth(0, empty_mask, contour, distances, centroid);
     REQUIRE(teeth.empty());
@@ -75,15 +74,15 @@ TEST_CASE("count_teeth - single tooth", "[count_teeth]") {
     std::vector<uint8_t> mask = {0, 0, 1, 1, 1, 0, 0};
 
     // Create corresponding contour points in a circle
-    std::vector<cv::Point> contour;
+    std::vector<cc::Point2i> contour;
     std::vector<double> distances;
-    cv::Point2f centroid(50, 50);
+    cc::Point2f centroid(50, 50);
 
     for (size_t i = 0; i < mask.size(); ++i) {
         double angle = (2.0 * std::numbers::pi * i) / mask.size();
         double radius = mask[i] ? 40 : 30; // closer when mask is 0, farther when mask is 1
 
-        cv::Point pt(
+        cc::Point2i pt(
             static_cast<int>(centroid.x + radius * cos(angle)),
             static_cast<int>(centroid.y + radius * sin(angle))
         );
@@ -109,15 +108,15 @@ TEST_CASE("count_teeth - multiple teeth", "[count_teeth]") {
     // Create a mask with three teeth
     std::vector<uint8_t> mask = {0, 1, 1, 0, 0, 1, 0, 0, 1, 1, 0, 0};
 
-    std::vector<cv::Point> contour;
+    std::vector<cc::Point2i> contour;
     std::vector<double> distances;
-    cv::Point2f centroid(100, 100);
+    cc::Point2f centroid(100, 100);
 
     for (size_t i = 0; i < mask.size(); ++i) {
         double angle = (2.0 * std::numbers::pi * i) / mask.size();
         double radius = mask[i] ? 25 : 50;
 
-        cv::Point pt(
+        cc::Point2i pt(
             static_cast<int>(centroid.x + radius * cos(angle)),
             static_cast<int>(centroid.y + radius * sin(angle))
         );
@@ -150,9 +149,9 @@ TEST_CASE("count_teeth - angle calculations", "[count_teeth]") {
     // Create a simple two-tooth pattern to verify angle calculations
     std::vector<uint8_t> mask = {0, 1, 0, 0, 1, 0};
 
-    std::vector<cv::Point> contour;
+    std::vector<cc::Point2i> contour;
     std::vector<double> distances;
-    cv::Point2f centroid(0, 0);
+    cc::Point2f centroid(0, 0);
 
     // Create points at specific angles for predictable results
     std::vector<double> expected_angles;
@@ -160,7 +159,7 @@ TEST_CASE("count_teeth - angle calculations", "[count_teeth]") {
         double angle = (2.0 * std::numbers::pi * i) / mask.size();
         expected_angles.push_back(angle);
 
-        cv::Point pt(
+        cc::Point2i pt(
             static_cast<int>(100 * cos(angle)),
             static_cast<int>(100 * sin(angle))
         );
@@ -189,13 +188,13 @@ TEST_CASE("count_teeth - wraparound behavior", "[count_teeth]") {
     // Test behavior when teeth wrap around the end of the mask
     std::vector<uint8_t> mask = {1, 0, 1, 0, 1, 1};
 
-    std::vector<cv::Point> contour;
+    std::vector<cc::Point2i> contour;
     std::vector<double> distances;
-    cv::Point2f centroid(50, 50);
+    cc::Point2f centroid(50, 50);
 
     for (size_t i = 0; i < mask.size(); ++i) {
         double radius = mask[i] ? 40 : 30;
-        cv::Point pt(static_cast<int>(centroid.x + radius), static_cast<int>(centroid.y));
+        cc::Point2i pt(static_cast<int>(centroid.x + radius), static_cast<int>(centroid.y));
         contour.push_back(pt);
         distances.push_back(radius);
     }
@@ -214,4 +213,34 @@ TEST_CASE("count_teeth - wraparound behavior", "[count_teeth]") {
     REQUIRE(teeth[1].m_ToothIdx             == 2);
     REQUIRE(teeth[1].m_LowHighTransitionIdx == 3); // wraps to position 0 in the next iteration
     REQUIRE(teeth[1].m_HighLowTransitionIdx == 0);
+}
+
+TEST_CASE("find_tooth_start - single element mask", "[count_teeth]") {
+    SECTION("single zero") {
+        std::vector<uint8_t> mask = {0};
+        auto result = find_tooth_start(mask);
+        REQUIRE(!result.has_value());
+    }
+
+    SECTION("single one") {
+        std::vector<uint8_t> mask = {1};
+        auto result = find_tooth_start(mask);
+        REQUIRE(!result.has_value()); // no 0->1 transition possible
+    }
+}
+
+TEST_CASE("find_tooth_start - two element mask", "[count_teeth]") {
+    SECTION("0 then 1") {
+        std::vector<uint8_t> mask = {0, 1};
+        auto result = find_tooth_start(mask);
+        REQUIRE(result.has_value());
+        REQUIRE(result.value() == 0);
+    }
+
+    SECTION("1 then 0") {
+        std::vector<uint8_t> mask = {1, 0};
+        auto result = find_tooth_start(mask);
+        REQUIRE(result.has_value());
+        REQUIRE(result.value() == 1); // wraps: mask[1]=0, mask[0]=1
+    }
 }

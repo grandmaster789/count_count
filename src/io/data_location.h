@@ -1,5 +1,5 @@
-#ifndef IO_DATA_LOCATION_H
-#define IO_DATA_LOCATION_H
+#ifndef CC_IO_DATA_LOCATION_H
+#define CC_IO_DATA_LOCATION_H
 
 #include <filesystem>
 

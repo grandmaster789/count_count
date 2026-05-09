@@ -1,5 +1,5 @@
-#ifndef TYPES_RESOLUTION_H
-#define TYPES_RESOLUTION_H
+#ifndef CC_TYPES_RESOLUTION_H
+#define CC_TYPES_RESOLUTION_H
 
 #include <iosfwd>
 #include <format>

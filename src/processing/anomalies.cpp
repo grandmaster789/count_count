@@ -5,6 +5,8 @@
 
 #include "types/tooth_anomaly.h"
 
+#include <cmath>
+
 namespace cc::processing {
     std::vector<uint8_t> find_anomalies(
         const std::vector<cc::ToothMeasurement>& teeth
@@ -24,7 +26,7 @@ namespace cc::processing {
 
         for (size_t i = 0; i < teeth.size(); ++i) {
             const auto& current = teeth[i];
-            const auto& next    = teeth[(i + 1) % teeth.size()];;
+            const auto& next    = teeth[(i + 1) % teeth.size()];
 
             tooth_arcs.push_back(
                 arc_length(
@@ -59,8 +61,8 @@ namespace cc::processing {
             double tooth_gap = tooth_arc_gaps_to_next[i];
             double tooth_arc = tooth_arcs[i];
 
-            double tooth_arc_anomaly = abs(tooth_arc - tooth_arc_mean);
-            double tooth_gap_anomaly = abs(tooth_gap - tooth_gap_mean);
+            double tooth_arc_anomaly = std::abs(tooth_arc - tooth_arc_mean);
+            double tooth_gap_anomaly = std::abs(tooth_gap - tooth_gap_mean);
 
             if (tooth_gap_anomaly > tooth_gap_anomaly_strong)
                 tooth_anomaly_mask[i] |= cc::gap;

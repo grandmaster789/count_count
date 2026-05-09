@@ -1,5 +1,5 @@
-#ifndef TOOTH_ANOMALY_H
-#define TOOTH_ANOMALY_H
+#ifndef CC_TYPES_TOOTH_ANOMALY_H
+#define CC_TYPES_TOOTH_ANOMALY_H
 
 #include <cstdint>
 #include <iosfwd>

@@ -1,4 +1,5 @@
 #include "angles.h"
+#include <cmath>
 #include <numbers>
 
 namespace cc::math {
@@ -6,9 +7,12 @@ namespace cc::math {
         double starting_radians,
         double ending_radians
     ) {
-        while (starting_radians > ending_radians)
-            ending_radians += 2.0 * std::numbers::pi;
+        double diff = ending_radians - starting_radians;
+        double result = std::fmod(diff, 2.0 * std::numbers::pi);
 
-        return ending_radians - starting_radians;
+        if (result < 0.0)
+            result += 2.0 * std::numbers::pi;
+
+        return result;
     }
 }

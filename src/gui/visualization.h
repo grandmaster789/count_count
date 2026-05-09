@@ -1,25 +1,27 @@
 #ifndef CC_GUI_VISUALIZATION_H
 #define CC_GUI_VISUALIZATION_H
 
-#include <opencv2/opencv.hpp>
-
+#include "types/image.h"
+#include "types/point.h"
+#include "types/color.h"
 #include "types/tooth_measurement.h"
 
 namespace cc {
     void draw_gear_arrow(
-              cv::Mat&     output_image,
-        const cv::Point2d& gear_center,
-        double             gear_radius,
-        double             angle,
-        const cv::Scalar&  color     = cv::Scalar(255, 255, 127),
-        int                thickness = 3
+              cc::Image&    output_image,
+        const cc::Point2d&  gear_center,
+        double              gear_radius,
+        double              angle,
+        const cc::Color3&   color     = cc::Color3(255, 255, 127),
+        int                 thickness = 3
     );
 
     void display_results(
-        cv::Point2i                          centroid_i,
+        cc::Point2i                          centroid_i,
         const std::vector<ToothMeasurement>& teeth,
         const std::vector<uint8_t>&          tooth_anomaly_mask,
-        cv::Mat&                             output_image
+        cc::Image&                           output_image,
+        int                                  speculative_count = -1
     );
 }
 

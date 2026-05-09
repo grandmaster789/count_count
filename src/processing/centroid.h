@@ -3,16 +3,16 @@
 
 #include <tuple>
 #include <vector>
-#include <opencv2/opencv.hpp>
+
+#include "types/point.h"
 
 namespace cc::processing {
     std::tuple<
-        cv::Point2d,
-        cv::Point2f,
-        cv::Point2i
+        cc::Point2d,
+        cc::Point2f,
+        cc::Point2i
     > find_centroid(
-        const std::vector<std::vector<cv::Point>>& contours,
-        int                                        largest_component_idx
+        const std::vector<cc::Point2i>& contour
     );
 }
 

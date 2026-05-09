@@ -4,48 +4,139 @@
 #include "count_teeth.h"
 #include "anomalies.h"
 
+#include "math/geometry.h"
+#include "math/statistics.h"
 #include "types/tooth_measurement.h"
 
+#include <cmath>
+#include <limits>
+
 namespace cc::processing {
+    namespace {
+        // Radial consistency score: mean(r) / std_dev(r) of point distances from the
+        // contour centroid. Perfect circle = ∞, shallow-toothed gear ≈ 10..30, square ≈ 6,
+        // elongated blob ≈ 2. Higher = rounder.
+        double radial_consistency(const std::vector<cc::Point2i>& contour) {
+            if (contour.size() < 8) return 0.0;
+
+            double cx = 0.0, cy = 0.0;
+            for (const auto& p : contour) { cx += p.x; cy += p.y; }
+            cx /= static_cast<double>(contour.size());
+            cy /= static_cast<double>(contour.size());
+
+            double sum = 0.0, sum_sq = 0.0;
+            for (const auto& p : contour) {
+                double dx = p.x - cx;
+                double dy = p.y - cy;
+                double r  = std::hypot(dx, dy);
+                sum    += r;
+                sum_sq += r * r;
+            }
+            double n    = static_cast<double>(contour.size());
+            double mean = sum / n;
+            if (mean <= 0.0) return 0.0;
+
+            double variance = std::max(0.0, (sum_sq / n) - mean * mean);
+            double stddev   = std::sqrt(variance);
+            if (stddev < 1e-6) return std::numeric_limits<double>::infinity();
+
+            return mean / stddev;
+        }
+
+        int pick_largest(const std::vector<std::vector<cc::Point2i>>& contours, double min_area) {
+            int idx = -1;
+            double best = min_area;
+            for (size_t i = 0; i < contours.size(); ++i) {
+                double a = cc::math::polygon_area(contours[i]);
+                if (a > best) {
+                    best = a;
+                    idx  = static_cast<int>(i);
+                }
+            }
+            return idx;
+        }
+
+        int pick_nearest_to_center(
+            const std::vector<std::vector<cc::Point2i>>& contours,
+            double min_area, int cx, int cy)
+        {
+            int    idx       = -1;
+            double best_dist = std::numeric_limits<double>::infinity();
+            for (size_t i = 0; i < contours.size(); ++i) {
+                double a = cc::math::polygon_area(contours[i]);
+                if (a < min_area) continue;
+
+                double sum_x = 0.0, sum_y = 0.0;
+                for (const auto& p : contours[i]) { sum_x += p.x; sum_y += p.y; }
+                double n    = static_cast<double>(contours[i].size());
+                double dist = std::hypot(sum_x / n - cx, sum_y / n - cy);
+                if (dist < best_dist) {
+                    best_dist = dist;
+                    idx       = static_cast<int>(i);
+                }
+            }
+            return idx;
+        }
+
+        int pick_most_circular(const std::vector<std::vector<cc::Point2i>>& contours, double min_area) {
+            int idx = -1;
+            double best_score = 0.0;
+            for (size_t i = 0; i < contours.size(); ++i) {
+                double a = cc::math::polygon_area(contours[i]);
+                if (a < min_area) continue;
+
+                double score = radial_consistency(contours[i]);
+                if (score > best_score) {
+                    best_score = score;
+                    idx = static_cast<int>(i);
+                }
+            }
+            return idx;
+        }
+    }
+
     std::optional<ContourResult> process_contours(
-        const std::vector<std::vector<cv::Point>>& all_contours,
-        const std::vector<cv::Vec4i>&              hierarchy,
-              cv::Mat&                             output_image
+        const std::vector<std::vector<cc::Point2i>>& all_contours,
+              cc::Image&                             output_image,
+              e_ContourSelector                      selector
     ) {
-        int    idx                   = 0;
-        int    largest_component_idx = 0;
-        double max_area              = 0;
+        // minimum area filter: contour must be at least 1% of image area
+        double image_area = static_cast<double>(output_image.rows()) * output_image.cols();
+        double min_area   = image_area * 0.01;
 
-        // loop through the top-level contours (the iteration sequence is described in the hierarchy vector
-        // and terminates with a negative value) and find the biggest one.
-        for (; idx >= 0; idx = hierarchy[idx][0]) {
-            const auto &cont = all_contours[idx];
+        int chosen_idx;
+        switch (selector) {
+            case e_ContourSelector::most_circular:
+                chosen_idx = pick_most_circular(all_contours, min_area);
+                break;
+            case e_ContourSelector::nearest_to_center:
+                chosen_idx = pick_nearest_to_center(
+                    all_contours, min_area,
+                    output_image.cols() / 2, output_image.rows() / 2);
+                break;
+            default:
+                chosen_idx = pick_largest(all_contours, min_area);
+                break;
+        }
 
-            double area = std::fabs(cv::contourArea(cv::Mat(cont)));
+        if (chosen_idx < 0)
+            return std::nullopt;
 
-            if (area > max_area) {
-                max_area = area;
-                largest_component_idx = idx;
+        const auto& largest_contour = all_contours[chosen_idx];
+
+        // draw contour onto output image (red)
+        for (size_t i = 0; i < largest_contour.size(); ++i) {
+            auto& pt = largest_contour[i];
+            if (pt.y >= 0 && pt.y < output_image.rows() && pt.x >= 0 && pt.x < output_image.cols()) {
+                uint8_t* pixel = output_image.at(pt.y, pt.x);
+                pixel[0] = 0;   // B
+                pixel[1] = 0;   // G
+                pixel[2] = 255; // R
             }
         }
 
-        cv::drawContours(
-            output_image,
-            all_contours,
-            largest_component_idx,
-            cv::Scalar(0, 0, 255),
-            1, // thickness, or cv::FILLED to fill the entire thing
-            cv::LINE_8,
-            hierarchy
-        );
-
         // find centroid of the contour
-        auto [centroid_d, centroid_f, centroid_i] = find_centroid(
-            all_contours,
-            largest_component_idx
-        );
-
-        const auto &largest_contour = all_contours[largest_component_idx];
+        auto [centroid_d, centroid_f, centroid_i] = find_centroid(largest_contour);
 
         // loop over the largest contour, collect 'similar' distances to the center point
         std::vector<double> distances;
@@ -58,14 +149,12 @@ namespace cc::processing {
             distances.push_back(distance);
         }
 
-        // find the largest and smallest distances to the center, use half that as a threshold
-        auto min_max = std::minmax_element(distances.begin(), distances.end());
-        auto distance_threshold = (*min_max.first + *min_max.second) / 2.0;
+        auto distance_threshold = cc::math::percentile_threshold(distances);
 
         std::vector<uint8_t> tooth_mask(largest_contour.size(), 0);
 
         for (size_t i = 0; i < largest_contour.size(); ++i)
-            tooth_mask[i] = (distances[i] < distance_threshold) ? 1 : 0;
+            tooth_mask[i] = (distances[i] >= distance_threshold) ? 1 : 0;
 
         auto first_tooth = find_tooth_start(tooth_mask);
         if (!first_tooth)
@@ -79,9 +168,12 @@ namespace cc::processing {
             centroid_f
         );
 
+        int speculative = estimate_tooth_count(teeth);
+
         return ContourResult {
-            .m_Teeth      = std::move(teeth),
-            .m_Centroid   = centroid_i
+            .m_Teeth           = std::move(teeth),
+            .m_Centroid        = centroid_i,
+            .m_SpeculativeCount = speculative
         };
     }
 }

@@ -1,11 +1,8 @@
 {
   "name" : "countvoncount",
   "version-string" : "1.0.0",
-  "builtin-baseline" : "852e42db9f6d9757f92f5b5eca3f3486d753f11f",
+  "builtin-baseline" : "d64c795ed9ba5ecaa52725213eb95de9436c748a",
   "dependencies" : [ {
-    "name" : "opencv4",
-    "version>=" : "4.10.0"
-  }, {
     "name" : "stb",
     "version>=" : "2024-07-29#1"
   }, {

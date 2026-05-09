@@ -4,8 +4,7 @@
 #include <cstdint>
 #include <iosfwd>
 
-#include <opencv2/opencv.hpp>
-
+#include "color.h"
 #include "resolution.h"
 
 namespace cc {
@@ -16,7 +15,7 @@ namespace cc {
     struct Settings {
         int        m_SelectedCamera           = e_CameraSelection::FIRST_CAMERA;
         Resolution m_SourceResolution         = Resolution { 1920, 1080 };
-        cv::Scalar m_ForegroundColor          = { 0, 0, 0 };
+        Color3     m_ForegroundColor          = { 0, 0, 0 };
         int        m_ForegroundColorTolerance = 0;
 
         friend std::ostream& operator << (std::ostream& os, const Settings& settings);

@@ -3,16 +3,13 @@
 
 #include <filesystem>
 
-#include <opencv2/opencv.hpp>
+#include "types/image.h"
 
 #include "main_window_controller.h"
 #include "camera_manager.h"
 #include "settings_manager.h"
 
 namespace cc::app {
-    class CameraManager;
-    class SettingsManager;
-
     class Application {
     public:
         explicit Application(const std::filesystem::path& exe_path);
@@ -35,7 +32,13 @@ namespace cc::app {
         std::unique_ptr<MainWindowController> m_UiController;
 
         bool m_Running      = false;
-        bool m_UseLiveVideo = true;  // set this to false to use a reference image instead
+        bool m_UseLiveVideo = false; // set this to false to use a reference image instead
+
+        enum class e_SegmentationMode {
+            color_threshold,
+            edge_detection,
+            background_subtraction
+        } m_SegmentationMode = e_SegmentationMode::color_threshold;
 
         static constexpr const size_t k_MinimumToothCount = 8;
 
@@ -44,12 +47,15 @@ namespace cc::app {
             foreground
         } m_Show = e_ShowImage::processed_image;
 
-        cv::Mat m_SourceImage;    // BGR
-        cv::Mat m_Foreground;     // BGR
-        cv::Mat m_ForegroundMask; // grayscale
+        cc::Image m_SourceImage;    // BGR
+        cc::Image m_OutputImage;    // BGR  — reused each frame
+        cc::Image m_Foreground;     // BGR
+        cc::Image m_ForegroundMask; // grayscale
+        cc::Image m_BlurTemp;       // grayscale — scratch buffer for median blur
 
         void initialize_buffers(); // can only be done once the source image is set at least once
         void main_loop();
+        void auto_detect_sensitivity();
         void print_startup_info() const;
     };
 }

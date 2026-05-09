@@ -1,10 +1,10 @@
-#ifndef COUNTVONCOUNT_PLATFORM_H
-#define COUNTVONCOUNT_PLATFORM_H
+#ifndef CC_PLATFORM_PLATFORM_H
+#define CC_PLATFORM_PLATFORM_H
 
 // detect which platform this is compiled on and provide compile-time constants that indicate which it is
 
 #include <iosfwd>
-#include <formaT>
+#include <format>
 
 #define CVC_PLATFORM_WINDOWS 1
 #define CVC_PLATFORM_LINUX   2

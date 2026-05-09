@@ -1,10 +1,10 @@
 // tests/test_jpg_io.cpp
 #include <catch2/catch_test_macros.hpp>
-#include <opencv2/opencv.hpp>
 #include <filesystem>
 #include <fstream>
 #include <chrono>
 #include <iostream>
+#include <random>
 #include "io/jpg.h"
 
 namespace fs = std::filesystem;
@@ -28,40 +28,32 @@ public:
     }
 
     void createTestImages() {
-        // Create a simple 3-channel (BGR) test image
-        test_image_bgr = cv::Mat::zeros(100, 100, CV_8UC3);
-        cv::rectangle(
-            test_image_bgr,
-            cv::Point(25, 25),
-            cv::Point(75, 75),
-            cv::Scalar(255, 0, 0), // Blue rectangle
-            -1
-        );
+        // Create a simple 3-channel (BGR) test image with a blue rectangle
+        test_image_bgr = cc::Image(100, 100, 3);
+        for (int y = 25; y <= 75; ++y) {
+            for (int x = 25; x <= 75; ++x) {
+                uint8_t* p = test_image_bgr.at(y, x);
+                p[0] = 255; // B
+                p[1] = 0;   // G
+                p[2] = 0;   // R
+            }
+        }
 
-        // Create a grayscale test image
-        test_image_gray = cv::Mat::zeros(50, 50, CV_8UC1);
-        cv::circle(
-            test_image_gray,
-            cv::Point(25, 25), 15,
-            cv::Scalar(255),    // White circle
-            -1
-        );
-
-        // Create a 4-channel (BGRA) test image
-        test_image_bgra = cv::Mat::zeros(75, 75, CV_8UC4);
-        cv::rectangle(
-            test_image_bgra,
-            cv::Point(10, 10),
-            cv::Point(65, 65),
-            cv::Scalar(0, 255, 0, 255), // Green rectangle
-            -1
-        );
+        // Create a grayscale test image with a white circle
+        test_image_gray = cc::Image(50, 50, 1);
+        for (int y = 0; y < 50; ++y) {
+            for (int x = 0; x < 50; ++x) {
+                int dx = x - 25;
+                int dy = y - 25;
+                if (dx * dx + dy * dy <= 15 * 15)
+                    test_image_gray.at(y, x)[0] = 255;
+            }
+        }
     }
 
     fs::path test_dir;
-    cv::Mat test_image_bgr;
-    cv::Mat test_image_gray;
-    cv::Mat test_image_bgra;
+    cc::Image test_image_bgr;
+    cc::Image test_image_gray;
 };
 
 // Test successful loading of a valid JPEG file
@@ -76,13 +68,13 @@ TEST_CASE_METHOD(JpgIOTestFixture, "LoadValidJpeg", "[jpg_io]") {
     REQUIRE(fs::exists(test_file));
 
     // Load the image back
-    cv::Mat loaded_image;
+    cc::Image loaded_image;
     REQUIRE_NOTHROW(loaded_image = load_jpg(test_file));
 
     // Verify properties
     REQUIRE(!loaded_image.empty());
-    REQUIRE( loaded_image.rows       == test_image_bgr.rows);
-    REQUIRE( loaded_image.cols       == test_image_bgr.cols);
+    REQUIRE( loaded_image.rows()     == test_image_bgr.rows());
+    REQUIRE( loaded_image.cols()     == test_image_bgr.cols());
     REQUIRE( loaded_image.channels() == 3); // JPEG should be 3-channel
 }
 
@@ -128,9 +120,8 @@ TEST_CASE_METHOD(JpgIOTestFixture, "SaveBGRImage", "[jpg_io]") {
 TEST_CASE_METHOD(JpgIOTestFixture, "SaveEmptyImage", "[jpg_io]") {
     using cc::io::save_jpg;
     using cc::io::ImageError;
-    using cv::Mat;
 
-    Mat empty_image;
+    cc::Image empty_image;
     fs::path output_file = test_dir / "empty.jpg";
 
     REQUIRE_THROWS_AS(save_jpg(empty_image, output_file), ImageError);
@@ -147,14 +138,13 @@ TEST_CASE_METHOD(JpgIOTestFixture, "RoundTripBGR", "[jpg_io]") {
     REQUIRE_NOTHROW(save_jpg(test_image_bgr, temp_file));
 
     // Load it back
-    cv::Mat loaded_image;
+    cc::Image loaded_image;
     REQUIRE_NOTHROW(loaded_image = load_jpg(temp_file));
 
     // Verify basic properties
-    REQUIRE(loaded_image.rows       == test_image_bgr.rows);
-    REQUIRE(loaded_image.cols       == test_image_bgr.cols);
+    REQUIRE(loaded_image.rows()     == test_image_bgr.rows());
+    REQUIRE(loaded_image.cols()     == test_image_bgr.cols());
     REQUIRE(loaded_image.channels() == test_image_bgr.channels());
-    REQUIRE(loaded_image.type()     == test_image_bgr.type());
 }
 
 // Test saving to non-existent directory
@@ -178,7 +168,7 @@ TEST_CASE_METHOD(JpgIOTestFixture, "SpecialCharactersInPath", "[jpg_io]") {
     REQUIRE_NOTHROW(save_jpg(test_image_bgr, special_path));
     REQUIRE(fs::exists(special_path));
 
-    cv::Mat loaded;
+    cc::Image loaded;
     REQUIRE_NOTHROW(loaded = load_jpg(special_path));
     REQUIRE(!loaded.empty());
 }
@@ -188,13 +178,16 @@ TEST_CASE_METHOD(JpgIOTestFixture, "LargeImageHandling", "[jpg_io]") {
     using namespace std::chrono;
     using cc::io::save_jpg;
     using cc::io::load_jpg;
-    using cv::Mat;
-    using cv::Scalar;
-    using cv::randu;
 
-    // Create a larger test image
-    Mat large_image = Mat::zeros(1000, 1000, CV_8UC3);
-    randu(large_image, Scalar::all(0), Scalar::all(255));
+    // Create a larger test image with random data
+    cc::Image large_image(1000, 1000, 3);
+    std::mt19937 rng(42);
+    std::uniform_int_distribution<int> dist(0, 255);
+    for (int y = 0; y < 1000; ++y) {
+        uint8_t* row = large_image.ptr(y);
+        for (int x = 0; x < 1000 * 3; ++x)
+            row[x] = static_cast<uint8_t>(dist(rng));
+    }
 
     fs::path large_file = test_dir / "large_image.jpg";
 
@@ -202,13 +195,13 @@ TEST_CASE_METHOD(JpgIOTestFixture, "LargeImageHandling", "[jpg_io]") {
     REQUIRE_NOTHROW(save_jpg(large_image, large_file));
     auto save_end = high_resolution_clock::now();
 
-    Mat loaded_large;
+    cc::Image loaded_large;
     REQUIRE_NOTHROW(loaded_large = load_jpg(large_file));
     auto load_end = high_resolution_clock::now();
 
     // Verify the image was processed correctly
-    REQUIRE(loaded_large.rows == large_image.rows);
-    REQUIRE(loaded_large.cols == large_image.cols);
+    REQUIRE(loaded_large.rows() == large_image.rows());
+    REQUIRE(loaded_large.cols() == large_image.cols());
     REQUIRE(loaded_large.channels() == large_image.channels());
 
     // Log timing (optional - mainly for development)

@@ -24,8 +24,8 @@ namespace cc::app {
 
         void reset_to_default();
 
-        void       set_selected_color(const cv::Scalar& color);
-        cv::Scalar get_selected_color() const;
+        void   set_selected_color(const Color3& color);
+        Color3 get_selected_color() const;
 
     private:
         Settings              m_Settings;

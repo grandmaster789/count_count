@@ -6,15 +6,15 @@
 
 namespace cc {
     struct ToothMeasurement {
-        double m_MinDistance =  std::numeric_limits<double>::max();
-        double m_MaxDistance = -std::numeric_limits<double>::max();
-        double m_StartingAngle;
-        double m_EndingAngle;
+        double m_MinDistance    =  std::numeric_limits<double>::max();
+        double m_MaxDistance    = -std::numeric_limits<double>::max();
+        double m_StartingAngle = 0.0;
+        double m_EndingAngle   = 0.0;
 
-        size_t m_LowHighTransitionIdx;
-        size_t m_HighLowTransitionIdx;
+        size_t m_LowHighTransitionIdx = 0;
+        size_t m_HighLowTransitionIdx = 0;
 
-        size_t m_ToothIdx;
+        size_t m_ToothIdx = 0;
 
         friend std::ostream& operator << (std::ostream& os, const ToothMeasurement& tm);
     };

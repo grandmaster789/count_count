@@ -1,4 +1,5 @@
 #include "data_location.h"
+#include <iostream>
 
 namespace cc {
     std::filesystem::path find_data_folder(const std::filesystem::path& exe_path) {
@@ -10,7 +11,10 @@ namespace cc {
             if (fs::exists(current_path / "data"))
                 return current_path / "data";
 
-            current_path = current_path.parent_path();
+            auto parent = current_path.parent_path();
+            if (parent == current_path)
+                break;
+            current_path = parent;
         }
 
         throw std::runtime_error("Failed to find data folder");

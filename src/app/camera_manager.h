@@ -1,27 +1,40 @@
-#ifndef APP_CAMERA_MANAGER_H
-#define APP_CAMERA_MANAGER_H
+#ifndef CC_APP_CAMERA_MANAGER_H
+#define CC_APP_CAMERA_MANAGER_H
 
-#include <opencv2/opencv.hpp>
+#include "types/image.h"
 #include "types/resolution.h"
+
+#include "platform/platform.h"
+
+#include <mfreadwrite.h>
+#include <wrl/client.h>
 
 namespace cc::app {
     class CameraManager {
     public:
+        CameraManager();
+        ~CameraManager();
+
         bool initialize(int device_id = 0);
 
         [[nodiscard]] bool is_initialized() const;
 
-        [[nodiscard]] cv::Mat    grab_frame();
+        bool grab_frame(cc::Image& output);
 
         [[nodiscard]] Resolution get_resolution() const;
-        [[nodiscard]] bool       set_resolution(const Resolution& res); // NOTE this might not set the resolution as expected; returns false if it didn't work out
+        [[nodiscard]] bool       set_resolution(const Resolution& res);
 
     private:
-        static bool check_resolution(int camera_id, const Resolution& res);
+        bool negotiate_media_type(const Resolution& desired);
+        void query_stride();
 
-        int              m_DeviceId = 0;
-        cv::VideoCapture m_CaptureSource;
-        Resolution       m_Resolution;
+        int                                          m_DeviceId       = 0;
+        bool                                         m_MFInitialized  = false;
+        bool                                         m_Initialized    = false;
+        Resolution                                   m_Resolution     = { 0, 0 };
+        int                                          m_Stride         = 0;
+        Microsoft::WRL::ComPtr<IMFSourceReader>      m_SourceReader;
+        GUID                                         m_SubType        = {};
     };
 }
 

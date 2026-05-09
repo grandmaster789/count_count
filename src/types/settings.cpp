@@ -1,5 +1,6 @@
 #include "settings.h"
 
+#include <algorithm>
 #include <ostream>
 #include <istream>
 
@@ -17,18 +18,22 @@ namespace cc {
     }
 
     std::istream& operator >> (std::istream& is, Settings& s) {
-        int fg0;
-        int fg1;
-        int fg2;
+        int fg0, fg1, fg2;
 
         is >> s.m_SelectedCamera;
         is >> s.m_SourceResolution;
-
-        is >> fg0;
-        is >> fg1;
-        is >> fg2;
-
+        is >> fg0 >> fg1 >> fg2;
         is >> s.m_ForegroundColorTolerance;
+
+        if (is.fail())
+            return is;
+
+        // Clamp values to valid ranges
+        s.m_SelectedCamera = std::max(0, s.m_SelectedCamera);
+        s.m_ForegroundColorTolerance = std::clamp(s.m_ForegroundColorTolerance, 0, 255);
+        fg0 = std::clamp(fg0, 0, 255);
+        fg1 = std::clamp(fg1, 0, 255);
+        fg2 = std::clamp(fg2, 0, 255);
 
         s.m_ForegroundColor = {
             static_cast<double>(fg0),
