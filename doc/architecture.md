@@ -52,11 +52,13 @@ src/
 │   ├── settings_manager.h/.cpp      # Config file persistence
 │   └── main_window_controller.h/.cpp# Win32 native window + trackbar
 ├── processing/                      # Image processing pipeline
-│   ├── foreground.h/.cpp            # Color thresholding → binary mask
+│   ├── foreground.h/.cpp            # Color/Chebyshev threshold + blur + invert (AVX2 SIMD)
+│   ├── edge_mask.h/.cpp             # Edge-based foreground: BGR→luma→Sobel→flood-fill
+│   ├── auto_sensitivity.h/.cpp      # Auto color+tolerance detection (histogram + Otsu)
 │   ├── boundary_trace.h/.cpp        # Moore boundary tracing (contours)
 │   ├── contours.h/.cpp              # Largest contour analysis + tooth pipeline
 │   ├── centroid.h/.cpp              # Geometric center of contour
-│   ├── count_teeth.h/.cpp           # Tooth enumeration from distance signal
+│   ├── count_teeth.h/.cpp           # Tooth enumeration, span filter, RANSAC pitch estimate
 │   └── anomalies.h/.cpp             # Statistical 3-sigma anomaly detection
 ├── gui/                             # Rendering
 │   ├── visualization.h/.cpp         # Result overlay (arrows, text, circles)
@@ -119,12 +121,19 @@ cc::
 │   └── MainWindowController         # Win32 window
 │
 ├── processing::
-│   ├── determine_foreground()       # Color mask extraction
+│   ├── chebyshev_threshold()        # BGR Chebyshev distance → 0/255 mask (AVX2)
+│   ├── invert_mask()                # Bitwise NOT on mask buffer (AVX2)
+│   ├── majority_vote_blur()         # 9×9 box-sum majority vote via integral image (AVX2 lookup)
+│   ├── determine_foreground()       # Full color/Chebyshev pipeline (calls above three)
+│   ├── determine_foreground_by_edges() # Edge-based alternative pipeline
+│   ├── detect_sensitivity()         # Auto-detect foreground color + tolerance
+│   ├── detect_background_sensitivity() # Auto-detect background color + tolerance (for invert mode)
 │   ├── find_contours()              # Boundary tracing
 │   ├── process_contours()           # Full tooth pipeline
 │   ├── find_centroid()              # Contour center
 │   ├── find_tooth_start()           # First 0→1 transition
-│   ├── count_teeth()                # Tooth enumeration
+│   ├── count_teeth()                # Tooth enumeration with span filter
+│   ├── estimate_tooth_count()       # RANSAC-style pitch estimation with sub-harmonic collapse
 │   └── find_anomalies()             # 3σ statistical detection
 │
 ├── drawing::
@@ -177,32 +186,35 @@ Camera (live)                     Static image
 
 ### 2. Foreground Detection
 
+Three modes, cycled with **E**:
+
+**Color threshold** (default) — `determine_foreground(..., use_chebyshev=true/false)`:
 ```
 Source Image (BGR)  +  Selected Color  +  Tolerance
-         │                   │                │
-         └───────────┬───────┘                │
-                     │                        │
-        determine_color_range()  ←────────────┘
-                     │
-              ColorRange (min/max BGR)
-                     │
-         Per-pixel channel comparison
-         (B in [min.b, max.b] AND
-          G in [min.g, max.g] AND
-          R in [min.r, max.r])
-                     │
-              Binary mask (255 or 0)
-                     │
-         Majority-vote median blur (9×9)
-                     │
-              Cleaned binary mask
-                     │
+         │
+         ├── Chebyshev mode (use_chebyshev=true):
+         │     chebyshev_threshold() — AVX2, 32 pixels/iter
+         │     dist = max(|B-ref_b|, |G-ref_g|, |R-ref_r|)
+         │     mask = dist <= tolerance ? 255 : 0
+         │
+         └── HSV mode (use_chebyshev=false):
+               Per-pixel BGR→HSV, hue/sat/val range test
+         │
+         majority_vote_blur() — 9×9 box-sum via integral image, AVX2 lookup
+         │
+         invert_mask() — AVX2 bitwise NOT (background subtraction mode only)
+         │
          Copy with mask (src → dst where mask≠0)
-                     │
-              Foreground image (BGR)
 ```
 
-The user selects a foreground color by clicking on the image. The tolerance slider controls how wide the accepted color range is around that selection.
+**Edge detection** — `determine_foreground_by_edges()`:
+```
+BGR → luma (BT.601) → Sobel magnitude → mean+k·σ threshold
+→ morphological close (2× dilate + 2× erode)
+→ border flood-fill (exterior = 0, interior = 255)
+```
+
+**Background subtraction** — same as color threshold with `invert=true` and `use_chebyshev=true`. Auto-sensitivity in this mode calls `detect_background_sensitivity()` instead of `detect_sensitivity()`.
 
 ### 3. Contour Detection
 
@@ -258,7 +270,7 @@ Contour + Centroid
     ├── Measure distance from each contour point to centroid
     │   distance[i] = hypot(pt.x - cx, pt.y - cy)
     │
-    ├── Threshold = (min_distance + max_distance) / 2
+    ├── Threshold = otsu_threshold(distances) — maximises between-class variance
     │
     ├── Create tooth mask: 1 if distance < threshold (gap), 0 if ≥ (tooth tip)
     │   Note: teeth protrude outward, so higher distance = tooth
@@ -474,6 +486,7 @@ Loaded on startup, saved on shutdown (via `SettingsManager` destructor).
 |------------|---------|---------|
 | **Stb** | 2024-07-29+ | `stb_image.h` for JPEG loading, `stb_image_write.h` for saving |
 | **Catch2** | 3.4+ | Unit testing framework |
+| **xsimd** | 14.1.0+ | Header-only SIMD abstraction; AVX2 acceleration for Chebyshev threshold, majority-vote blur lookup, and mask invert in `foreground.cpp` |
 
 ### Win32 System Libraries
 
@@ -503,31 +516,41 @@ CMake 3.10+ with vcpkg integration. Sources are auto-collected via `GLOB_RECURSE
 
 | Compiler | Flags |
 |----------|-------|
-| MSVC | `/W4 /WX /MP`, defines `_CRT_SECURE_NO_WARNINGS` |
+| MSVC (`CountVonCountLib`) | `/W4 /WX /MP /arch:AVX2`, defines `_CRT_SECURE_NO_WARNINGS` |
+| MSVC (`CountVonCount`, `CountVonCountTests`) | `/W4 /WX /MP` (no `/arch:AVX2` — tests call SIMD code via the library ABI, not by including xsimd headers) |
 | GCC/Clang | `-Wall -Wextra -Werror -Wpedantic` |
 
 ---
 
 ## Test Suite
 
-107 test cases with 3,554 assertions covering all layers:
+18 test files covering all layers. Run with:
 
-| File | Tests | What it covers |
-|------|-------|----------------|
-| `test_types.cpp` | 12 | Image construction, clone, at(), Point2 arithmetic, Color3 indexing |
-| `test_statistics.cpp` | 6 | Bessel-corrected variance, mean, stddev, single-element edge cases |
-| `test_count_teeth.cpp` | 8 | Tooth start detection, single/multi tooth counting, angle calc, wraparound |
-| `test_find_anomalies.cpp` | 5 | Empty input, single tooth, uniform gear, gap anomaly, arc anomaly, 3σ threshold |
-| `test_jpg_io.cpp` | 9 | Load/save round-trip, error handling, special paths, large images |
-| `test_boundary_trace.cpp` | 7 | Empty/single pixel, rectangles, L-shape, full white, gear-like mask |
-| `test_drawing.cpp` | 15 | Lines, circles, arrows, polylines, text rendering, edge clipping |
-| `test_image_ops.cpp` | 9 | in_range, copy_with_mask, shoelace area, centroid |
-| `test_morphology.cpp` | 5 | Dilate, erode, morphological close, gap filling |
-| `test_color_conversion.cpp` | 8 | BGR→HSV for primaries/white/black/grey, brightness invariance |
-| `test_threshold.cpp` | 5 | Percentile threshold: bimodal, outliers, uniform, vs midpoint |
-| `test_smooth.cpp` | 6 | Constant signal, step, impulse, circular wrap, tooth signal preservation |
-
-Run with:
 ```bash
 ctest --test-dir build -C Release --output-on-failure
+# or run the binary directly:
+build/release/CountVonCountTests.exe          # all tests
+build/release/CountVonCountTests.exe [perf]   # perf tests only
+build/release/CountVonCountTests.exe ~[perf]  # exclude perf tests
 ```
+
+| File | What it covers |
+|------|----------------|
+| `test_types.cpp` | Image construction, clone, at(), Point2 arithmetic, Color3 indexing |
+| `test_statistics.cpp` | Bessel-corrected variance, mean, stddev, percentile_threshold, otsu_threshold |
+| `test_count_teeth.cpp` | Tooth start detection, counting, span filter, sub-harmonic collapse |
+| `test_find_anomalies.cpp` | Empty input, single tooth, uniform gear, gap/arc anomalies, 3σ threshold |
+| `test_jpg_io.cpp` | Load/save round-trip, error handling, special paths, large images |
+| `test_boundary_trace.cpp` | Empty/single pixel, rectangles, L-shape, full white, gear-like mask |
+| `test_drawing.cpp` | Lines, circles, arrows, polylines, text rendering, edge clipping |
+| `test_image_ops.cpp` | in_range, copy_with_mask, shoelace area, centroid |
+| `test_morphology.cpp` | Dilate, erode, morphological close, gap filling |
+| `test_color_conversion.cpp` | HSV foreground (hue, saturation, wraparound), Chebyshev foreground (incl. wide-image SIMD path), invert |
+| `test_threshold.cpp` | percentile_threshold and otsu_threshold: bimodal, outliers, uniform, edge cases |
+| `test_pixel_verify.cpp` | Pixel-level verification of image operations |
+| `test_smooth.cpp` | Constant signal, step, impulse, circular wrap, tooth signal preservation |
+| `test_auto_sensitivity.cpp` | Color histogram, Otsu on distance, detect_sensitivity, detect_background_sensitivity |
+| `test_edge_mask.cpp` | Edge-based foreground detection pipeline |
+| `test_contours.cpp` | Contour processing pipeline integration |
+| `test_visualization.cpp` | display_results label formatting (direct vs speculative count) |
+| `test_perf.cpp` | Millisecond timing: chebyshev_threshold, invert_mask, majority_vote_blur, full pipelines (tagged `[perf]`, always pass) |

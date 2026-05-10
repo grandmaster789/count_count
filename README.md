@@ -5,6 +5,7 @@ The project uses the following dependencies:
 
 - **Stb**: Image loading/saving (stb_image, stb_image_write)
 - **Catch2 3.4+**: Unit testing framework
+- **xsimd 14.1.0**: Header-only SIMD abstraction (AVX2 acceleration for foreground detection)
 - **Standard Template Library (STL)**: C++ standard library components
 - **vcpkg**: Package manager for C++ dependencies
 
@@ -48,13 +49,15 @@ Dependencies are managed using [vcpkg](https://github.com/microsoft/vcpkg).
 
 ### Keyboard Controls
 
-| Key       | Action                                              |
-|-----------|-----------------------------------------------------|
-| **A**     | Auto-detect foreground color and tolerance           |
-| **L**     | Toggle between live video and static image           |
-| **G**     | Save current frame as a timestamped JPG              |
-| **Enter** | Cycle between processed image and foreground mask    |
-| **Q/Esc** | Quit                                                 |
+| Key       | Action                                                              |
+|-----------|---------------------------------------------------------------------|
+| **A**     | Auto-detect foreground color and tolerance                          |
+| **E**     | Cycle segmentation mode: color threshold → edge detection → background subtraction |
+| **D**     | Toggle debug logging (verbose pipeline output to log file)          |
+| **L**     | Toggle between live video and static image                          |
+| **G**     | Save current frame as a timestamped JPG                             |
+| **Enter** | Cycle between processed image and foreground mask                   |
+| **Q/Esc** | Quit                                                                |
 
 ## Configuration
 
@@ -89,7 +92,7 @@ Processing occurs in several stages:
 - We traverse the contour to compute the centroid
 - Next we traverse the contour again, collecting distances to the centroid
 - The smallest distance to the gear center should be a gap between gear teeth, while the largest would be at the distance of a tooth
-- We use the midpoint of the 25th and 75th percentile distances as a threshold (robust to outliers compared to simple min/max midpoint)
+- We apply Otsu's method to the distance histogram to find the threshold that maximally separates the gap and tooth-tip populations
 - The sequence of distances is compared against the threshold, converting from distances to (binary) teeth and gaps
 - To count the number of teeth, we count the number of transitions from 0 (gap) to 1 (tooth), which is a rising edge
 - Next we apply statistical anomaly detection to figure out if any teeth are missing

@@ -1,7 +1,7 @@
 # ADR-001: SIMD Acceleration via xsimd
 
 **Date:** 2026-05-10  
-**Status:** Accepted
+**Status:** Partially implemented
 
 ---
 
@@ -97,6 +97,21 @@ Histogram accumulation has a data dependency (read-modify-write into `histogram[
 3. **Correctness first.** The scalar implementation stays in place behind a compile-time or runtime flag during development. SIMD paths are added alongside, not replacing, until tests pass.
 4. **Tests stay scalar.** Unit tests in `tests/` do not include xsimd headers and do not depend on `/arch:AVX2`. The observable outputs (pixel values, mask contents) must be bit-identical to the scalar path.
 5. **One loop at a time.** Each vectorised loop is a self-contained PR so regressions are easy to isolate.
+
+---
+
+## Implementation status
+
+| Loop | File | Status | Measured speedup (1920×1080) |
+|---|---|---|---|
+| Chebyshev threshold | `foreground.cpp` → `chebyshev_threshold()` | ✅ Done | 3.1× (isolated), 3.2× (full pipeline) |
+| Mask invert | `foreground.cpp` → `invert_mask()` | ✅ Done | 9.4× |
+| 9×9 blur lookup | `foreground.cpp` → `majority_vote_blur()` | ✅ Done | 2.2× (integral-image build is bottleneck) |
+| BGR→luma | `edge_mask.cpp` | ⏸ Deferred | uint8→uint16 widening in xsimd adds overhead; net gain ~1.5× |
+| Sobel gradient | `edge_mask.cpp` | ⏸ Deferred | Stencil pattern, high effort |
+| Colour histogram | `auto_sensitivity.cpp` | ⏸ Deferred | Subsampled, runs once per keypress, not per-frame |
+
+Perf tests live in `tests/test_perf.cpp` (tagged `[perf]`). Each vectorised function has a scalar reference implementation in the test for direct comparison.
 
 ---
 
