@@ -198,6 +198,26 @@ TEST_CASE("Chebyshev foreground: dark gray rejected from white target", "[color_
     REQUIRE(count_foreground(run_foreground(dark_gray, white, 50, false, true)) == 0);
 }
 
+TEST_CASE("Chebyshev foreground: wide image exercises SIMD path (>= 32 pixels wide)", "[color_conversion]") {
+    // 1×64 image: left 32 pixels within tolerance, right 32 pixels outside.
+    // Verifies the 32-lane SIMD body produces results bit-identical to scalar.
+    constexpr int W = 64;
+    cc::Image img(1, W, 3);
+    for (int x = 0; x < W; ++x) {
+        uint8_t* p = img.at(0, x);
+        if (x < 32) { p[0] = 230; p[1] = 230; p[2] = 230; } // dist=25, within tol=30
+        else         { p[0] = 200; p[1] = 200; p[2] = 200; } // dist=55, outside tol=30
+    }
+    cc::Color3 white(255, 255, 255);
+    auto mask = run_foreground(img, white, 30, false, true);
+
+    int inside = 0, outside = 0;
+    for (int x = 0;  x < 32; ++x) inside  += (mask.at(0, x)[0] > 0) ? 1 : 0;
+    for (int x = 32; x < 64; ++x) outside += (mask.at(0, x)[0] > 0) ? 1 : 0;
+    REQUIRE(inside  == 32);
+    REQUIRE(outside ==  0);
+}
+
 // ---------------------------------------------------------------------------
 // Invert path (invert=true)
 // ---------------------------------------------------------------------------

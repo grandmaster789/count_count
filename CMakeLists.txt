@@ -9,6 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Stb REQUIRED)
 find_package(Catch2 3 REQUIRED)
+find_package(xsimd REQUIRED)
 
 add_executable(CountVonCount)       # main executable
 add_library   (CountVonCountLib)    # project code as a static library
@@ -48,6 +49,8 @@ target_include_directories(CountVonCountLib PRIVATE
         ${Stb_INCLUDE_DIR}
 )
 
+target_link_libraries(CountVonCountLib PRIVATE xsimd)
+
 if (WIN32)
     target_link_libraries(CountVonCountLib PRIVATE
         mfplat mf mfreadwrite mfuuid
@@ -82,6 +85,7 @@ if (MSVC)
             /W4     # Enable all warnings
             /WX     # Warnings as errors
             /MP     # Enable multi-processor compilation
+            /arch:AVX2
     )
 
     target_compile_options(CountVonCountTests PRIVATE

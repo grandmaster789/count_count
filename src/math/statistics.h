@@ -20,8 +20,8 @@ namespace cc::math {
     [[nodiscard]]
     double percentile_threshold(std::vector<T> values);
 
-    // Otsu's method on continuous data: discretises into `bins` buckets and
-    // returns the value that maximises between-class variance.
+    // Otsu's method on continuous data: discretizes into `bins` buckets and
+    // returns the value that maximizes between-class variance.
     template <typename T>
     [[nodiscard]]
     double otsu_threshold(const std::vector<T>& values, int bins = 256);

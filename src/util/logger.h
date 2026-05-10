@@ -25,8 +25,8 @@ namespace cc::util {
     public:
         static Logger& instance() { static Logger x; return x; }
 
-        void     set_level(LogLevel level) { m_level = level; }
-        LogLevel get_level() const         { return m_level; }
+        void                   set_level(LogLevel level) { m_level = level; }
+        [[nodiscard]] LogLevel get_level() const         { return m_level; }
 
         template <typename... Args>
         void log(LogLevel level, std::format_string<Args...> format, Args&&... args) {

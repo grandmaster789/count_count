@@ -8,6 +8,9 @@
   }, {
     "name" : "catch2",
     "version>=" : "3.4.0"
+  }, {
+    "name" : "xsimd",
+    "version>=" : "14.1.0"
   }
   ]
 }
