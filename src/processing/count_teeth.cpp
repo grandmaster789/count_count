@@ -145,74 +145,56 @@ namespace cc::processing {
             spacings.push_back(delta);
         }
 
-        // RANSAC-style pitch estimation.
+        // Search over integer tooth counts N directly.  For each N, the implied
+        // pitch is exactly 2π/N — satisfying the physical constraint that N teeth
+        // fill one full revolution.  Each observed spacing must then be a positive
+        // integer multiple of that pitch (k=1 for adjacent detected teeth, k>1
+        // where teeth were merged or missed by the direct counter).
         //
-        // For each observed spacing s (and sub-harmonics s/k), treat it as a candidate
-        // pitch. Count inliers: other spacings within 25% of a positive integer multiple
-        // of that pitch. The true pitch explains ALL spacings (as multiples 1×, 2×, 3×...),
-        // while a spurious sub-pitch only fits the handful of spacings near that value.
-        //
-        // Tie-breaking by larger pitch prevents a sub-harmonic (e.g. pitch/2) from
-        // winning when it ties with the true pitch on inlier count.
-        constexpr int    k_MaxMultiple = 5;
-        constexpr double k_Tolerance   = 0.25; // fraction of candidate pitch
+        // Searching over integer N rather than over pitch values makes sub-harmonic
+        // collapse implicit: N=36 is considered independently of N=72, and because
+        // single-pitch spacings map to k=0.5 for N=36 (rejected), N=72 naturally
+        // collects more inliers.  When inlier counts tie (e.g. N=72 vs N=144 on a
+        // perfect gear), the smaller total residual of N=72 breaks the tie — each
+        // spacing is 2× as far from its nearest integer multiple when seen through
+        // the N=144 pitch.
+        constexpr double k_Tolerance = 0.25; // fraction of candidate pitch
+        constexpr int    k_MaxMissed = 5;    // max consecutive missed teeth in one gap
 
-        double best_pitch    = spacings[0];
+        double min_spacing = *std::min_element(spacings.begin(), spacings.end());
+        double max_spacing = *std::max_element(spacings.begin(), spacings.end());
+
+        int N_min = std::max(2, static_cast<int>(std::floor(2.0 * std::numbers::pi / max_spacing)));
+        int N_max = std::min(500,
+                        static_cast<int>(std::ceil(2.0 * std::numbers::pi / min_spacing)) * k_MaxMissed);
+
+        int    best_N        = static_cast<int>(teeth.size());
         int    best_inliers  = 0;
-        double best_int_frac = 1.0; // distance of 2π/pitch from the nearest integer
+        double best_residual = std::numeric_limits<double>::max();
 
-        for (double s : spacings) {
-            for (int k = 1; k <= k_MaxMultiple; ++k) {
-                double candidate = s / static_cast<double>(k);
-                if (candidate < 1e-6) continue;
+        for (int N = N_min; N <= N_max; ++N) {
+            double pitch = 2.0 * std::numbers::pi / static_cast<double>(N);
 
-                int inliers = 0;
-                for (double sj : spacings) {
-                    double nearest = std::round(sj / candidate);
-                    if (nearest >= 1.0 && std::abs(sj / candidate - nearest) < k_Tolerance)
-                        ++inliers;
+            int    inliers  = 0;
+            double residual = 0.0;
+            for (double s : spacings) {
+                double nearest = std::round(s / pitch);
+                double err     = std::abs(s / pitch - nearest);
+                if (nearest >= 1.0 && err < k_Tolerance) {
+                    ++inliers;
+                    residual += err;
                 }
+            }
 
-                // How close is 2π/candidate to an integer? A real gear always has an
-                // integer tooth count, so this distinguishes the true pitch (frac≈0)
-                // from nearby spurious candidates (frac>0) when inlier counts tie.
-                double full_turns = 2.0 * std::numbers::pi / candidate;
-                double frac = std::abs(std::fmod(full_turns, 1.0));
-                if (frac > 0.5) frac = 1.0 - frac; // distance to nearest integer
-
-                // Priority: 1) more inliers  2) pitch divides 2π more evenly  3) larger pitch
-                if (inliers > best_inliers ||
-                    (inliers == best_inliers && frac < best_int_frac) ||
-                    (inliers == best_inliers && frac == best_int_frac && candidate > best_pitch))
-                {
-                    best_inliers  = inliers;
-                    best_pitch    = candidate;
-                    best_int_frac = frac;
-                }
+            if (inliers > best_inliers ||
+                (inliers == best_inliers && residual < best_residual))
+            {
+                best_N        = N;
+                best_inliers  = inliers;
+                best_residual = residual;
             }
         }
 
-        // Collapse sub-harmonics: if m*best_pitch also fits all spacings as integer
-        // multiples, prefer the larger (coarser) pitch — it is the fundamental.
-        // This prevents e.g. pitch/2 from winning when it ties with the true pitch.
-        {
-            double collapsed = best_pitch;
-            for (int m = 2; m <= k_MaxMultiple; ++m) {
-                double candidate = best_pitch * static_cast<double>(m);
-                if (2.0 * std::numbers::pi / candidate < 2.0) break;
-
-                int inliers = 0;
-                for (double sj : spacings) {
-                    double nearest = std::round(sj / candidate);
-                    if (nearest >= 1.0 && std::abs(sj / candidate - nearest) < k_Tolerance)
-                        ++inliers;
-                }
-                if (inliers >= best_inliers)
-                    collapsed = candidate;
-            }
-            best_pitch = collapsed;
-        }
-
-        return static_cast<int>(std::round(2.0 * std::numbers::pi / best_pitch));
+        return best_N;
     }
 }
