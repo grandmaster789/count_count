@@ -2,8 +2,10 @@
 
 #include "processing/edge_mask.h"
 #include "processing/foreground.h"
+#include "processing/gear_template.h"
 #include "types/color.h"
 #include "types/image.h"
+#include "types/point.h"
 
 #include <algorithm>
 #include <chrono>
@@ -216,5 +218,26 @@ TEST_CASE("perf: determine_foreground_by_edges, 1920x1080", "[perf]") {
 
     std::cout << "[perf] determine_foreground_by_edges x" << reps << " @ 1920x1080\n"
               << "  " << ms << " ms  (" << ms / reps << " ms/frame)\n";
+    SUCCEED();
+}
+
+TEST_CASE("perf: fit_gear_template (solid disc), 1920x1080", "[perf]") {
+    // Worst case: a solid disc fills the whole annular IoU band [r_in, r_tip].
+    constexpr int W = 1920, H = 1080, reps = 50;
+    cc::Image mask(H, W, 1);
+    std::memset(mask.data(), 0, mask.total_bytes());
+    const int cx = W / 2, cy = H / 2, R = 200;
+    for (int y = 0; y < H; ++y)
+        for (int x = 0; x < W; ++x)
+            if ((x - cx) * (x - cx) + (y - cy) * (y - cy) <= R * R)
+                mask.ptr(y)[x] = 255;
+
+    long long ms = time_ms([&] {
+        for (int i = 0; i < reps; ++i)
+            (void)cc::processing::fit_gear_template(mask, {cx, cy}, 27);
+    });
+
+    std::cout << "[perf] fit_gear_template x" << reps << " @ 1920x1080 (R=200 disc)\n"
+              << "  " << ms << " ms  (" << static_cast<double>(ms) / reps << " ms/frame)\n";
     SUCCEED();
 }

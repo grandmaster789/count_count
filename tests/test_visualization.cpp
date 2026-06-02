@@ -103,7 +103,7 @@ TEST_CASE("display_results - renders centroid marker and tooth count text", "[vi
 
 TEST_CASE("display_results - speculative count label is wider than matching count label", "[visualization]") {
     // FFT count headlines: spec==direct(8) renders "8"; spec=72 vs direct 8 renders
-    // "72 (direct 8)", which occupies more pixels.
+    // "72 (8)", which occupies more pixels.
     auto teeth = uniform_teeth(8);
     std::vector<uint8_t> anomaly_mask(teeth.size(), cc::ToothAnomaly::none);
     cc::Point2i centroid{150, 150};

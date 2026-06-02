@@ -52,7 +52,8 @@ namespace cc {
         const std::vector<uint8_t>&              tooth_anomaly_mask,
         cc::Image&                               output_image,
         int                                      speculative_count,
-        int                                      direct_count
+        int                                      direct_count,
+        double                                   fit_score
     ) {
         // Scale font relative to image height so text is readable at any resolution
         double k_FontScale     = std::max(2.0, output_image.rows() / 100.0);
@@ -142,17 +143,30 @@ namespace cc {
         bool fft_valid = speculative_count > 0;
 
         std::string message;
+        // The embedded bitmap font only renders digits, '/', '(', ')', '%', '?', '!'
+        // and space — so the direct count and fit confidence are shown as bare
+        // numbers: "27 (26) 97%" = FFT count 27, direct count 26, 97% fit.
         if (fft_valid) {
             message = std::format("{}", speculative_count);
             if (has_anomaly)
                 message += std::format(" ({}/{})", teeth.size(), expected_count);
             else if (speculative_count != direct)
-                message += std::format(" (direct {})", direct);
+                message += std::format(" ({})", direct);
         } else if (has_anomaly) {
             message = std::format("{}/{}", teeth.size(), expected_count);
         } else {
             message = std::format("{}/{}", direct, direct);
         }
+
+        // Append the analysis-by-synthesis goodness-of-fit as an integer percent and
+        // flag low-confidence frames (poor template match → non-gear / bad frame).
+        // Thin-ring gears fit lower than solid discs (less body to match), so the
+        // flag sits below the lowest clean real gear (~0.52) while still catching
+        // genuinely poor matches.
+        const double k_LowConfidenceFit = 0.40;
+        bool low_confidence = (fit_score >= 0.0 && fit_score < k_LowConfidenceFit);
+        if (fit_score >= 0.0)
+            message += std::format("  {}%", (int)std::lround(fit_score * 100.0));
 
         auto text_size = drawing::measure_text(message, k_FontScale);
         int shadow_offset = std::max(2, static_cast<int>(k_FontScale / 2));
@@ -178,9 +192,10 @@ namespace cc {
             k_FontThickness
         );
 
-        uint8_t tb = has_anomaly ? k_BadB : k_GoodB;
-        uint8_t tg = has_anomaly ? k_BadG : k_GoodG;
-        uint8_t tr = has_anomaly ? k_BadR : k_GoodR;
+        uint8_t tb, tg, tr;
+        if (has_anomaly)         { tb = k_BadB; tg = k_BadG; tr = k_BadR; }
+        else if (low_confidence) { tb = 0;      tg = 170;    tr = 255;    } // amber warning
+        else                     { tb = k_GoodB; tg = k_GoodG; tr = k_GoodR; }
 
         drawing::draw_text(
             output_image,

@@ -11,8 +11,10 @@
 #include "processing/contours.h"
 #include "processing/boundary_trace.h"
 #include "processing/auto_sensitivity.h"
+#include "processing/gear_template.h"
 
 #include "gui/visualization.h"
+#include "gui/drawing.h"
 
 #include "util/logger.h"
 
@@ -205,13 +207,24 @@ namespace cc::app {
                             int smoothed_direct = mode_of(m_RecentDirectCounts);
                             int smoothed_spec   = mode_of(m_RecentSpecCounts);
 
+                            // Analysis-by-synthesis: fit an ideal gear of the displayed
+                            // count to the rim, draw the fitted template, and surface a
+                            // goodness-of-fit confidence (flags non-gears / bad frames).
+                            int fit_count = smoothed_spec > 0 ? smoothed_spec : smoothed_direct;
+                            auto fit = processing::fit_gear_template(
+                                m_ForegroundMask, result.m_Centroid, fit_count);
+                            if (fit.valid && fit.outline.size() > 1)
+                                drawing::draw_polyline(m_OutputImage, fit.outline,
+                                                       255, 255, 0, /*closed=*/true, 1); // cyan
+
                             display_results(
                                 result.m_Centroid,
                                 result.m_Teeth,
                                 tooth_anomaly_mask,
                                 m_OutputImage,
                                 smoothed_spec,
-                                smoothed_direct
+                                smoothed_direct,
+                                fit.valid ? fit.score : -1.0
                             );
                         }
                         else {
