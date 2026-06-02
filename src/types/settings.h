@@ -17,6 +17,7 @@ namespace cc {
         Resolution m_SourceResolution         = Resolution { 1920, 1080 };
         Color3     m_ForegroundColor          = { 0, 0, 0 };
         int        m_ForegroundColorTolerance = 0;
+        int        m_FocusValue               = 200;
 
         friend std::ostream& operator << (std::ostream& os, const Settings& settings);
         friend std::istream& operator >> (std::istream& is,       Settings& settings);

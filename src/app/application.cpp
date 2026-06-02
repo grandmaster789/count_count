@@ -113,7 +113,7 @@ namespace cc::app {
                         if (!m_CameraManager->set_resolution(settings.m_SourceResolution))
                             LOG_ERROR("Cannot set resolution to {}", settings.m_SourceResolution);
 
-                        if (!m_CameraManager->initialize(settings.m_SelectedCamera)) {
+                        if (!m_CameraManager->initialize(settings.m_SelectedCamera, settings.m_FocusValue)) {
                             LOG_ERROR("Cannot initialize camera");
                             m_Running = false;
                             break;
@@ -276,6 +276,25 @@ namespace cc::app {
                     }
                     break;
 
+                case '[':
+                case ']': {
+                    long min_f, max_f, step_f;
+                    if (m_CameraManager->get_focus_range(min_f, max_f, step_f)) {
+                        long current_f;
+                        if (m_CameraManager->get_focus(current_f)) {
+                            long next_f = current_f + (key == ']' ? step_f : -step_f);
+                            next_f = std::clamp(next_f, min_f, max_f);
+
+                            if (m_CameraManager->set_focus(next_f)) {
+                                LOG_INFO("Focus adjusted to {}", next_f);
+                                m_SettingsManager->get().m_FocusValue = static_cast<int>(next_f);
+                                m_SettingsManager->save();
+                            }
+                        }
+                    }
+                    break;
+                }
+
                 case -1: // timeout
                     break;
 
@@ -320,5 +339,18 @@ namespace cc::app {
         LOG_INFO("Data path:  {}",          m_DataPath.string());
 
         LOG_INFO("Selected resolution: {}", m_SettingsManager->get().m_SourceResolution);
+
+        print_keyboard_controls();
+    }
+
+    void Application::print_keyboard_controls() const {
+        LOG_INFO("Keyboard controls:");
+        LOG_INFO("  ESC, Q    - Exit application");
+        LOG_INFO("  ENTER     - Cycle display (Processed / Foreground mask)");
+        LOG_INFO("  L         - Toggle live video / static image");
+        LOG_INFO("  A         - Auto-detect foreground sensitivity");
+        LOG_INFO("  G         - Save current frame as screenshot");
+        LOG_INFO("  D         - Toggle debug logging");
+        LOG_INFO("  [ / ]     - Adjust camera focus");
     }
 }

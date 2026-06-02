@@ -5,7 +5,6 @@
 #include <mfapi.h>
 #include <mfidl.h>
 #include <mfreadwrite.h>
-#include <strmif.h> // IAMCameraControl, CameraControl_Focus
 
 #pragma comment(lib, "mfplat.lib")
 #pragma comment(lib, "mf.lib")
@@ -133,7 +132,7 @@ namespace cc::app {
         LOG_INFO("Camera stride (calculated): {}", m_Stride);
     }
 
-    bool CameraManager::initialize(int device_id) {
+    bool CameraManager::initialize(int device_id, int initial_focus) {
         if (!m_MFInitialized) {
             LOG_ERROR("Cannot initialize camera: MediaFoundation not available");
             return false;
@@ -141,6 +140,7 @@ namespace cc::app {
 
         m_DeviceId = device_id;
         m_SourceReader.Reset();
+        m_CameraControl.Reset();
         m_Initialized = false;
 
         // Enumerate video capture devices
@@ -243,12 +243,11 @@ namespace cc::app {
 
         // Set focus to manual mode
         // (https://learn.microsoft.com/en-us/windows/win32/api/strmif/nn-strmif-iamcameracontrol)
-        ComPtr<IAMCameraControl> camera_control;
-        hr = media_source->QueryInterface(IID_PPV_ARGS(&camera_control));
+        hr = media_source->QueryInterface(IID_PPV_ARGS(&m_CameraControl));
         if (SUCCEEDED(hr)) {
             // query the focus range
             long min_focus, max_focus, step, default_value, capabilities;
-            hr = camera_control->GetRange(
+            hr = m_CameraControl->GetRange(
                 CameraControl_Focus,
                 &min_focus,
                 &max_focus,
@@ -264,14 +263,38 @@ namespace cc::app {
 
             // set manual focus at a specific distance
             // for a Razer Kiyo Pro the range is 0 to 600
-            hr = camera_control->Set(
+            int focus_to_set = (initial_focus >= 0) ? initial_focus : 200;
+            hr = m_CameraControl->Set(
                 CameraControl_Focus,
-                200,
+                focus_to_set,
                 CameraControl_Flags_Manual
             );
+            if (SUCCEEDED(hr)) {
+                LOG_INFO("Set manual focus to {}", focus_to_set);
+            }
         }
 
         return true;
+    }
+
+    bool CameraManager::get_focus_range(long& min, long& max, long& step) const {
+        if (!m_CameraControl) return false;
+        long default_val, caps;
+        HRESULT hr = m_CameraControl->GetRange(CameraControl_Focus, &min, &max, &step, &default_val, &caps);
+        return SUCCEEDED(hr);
+    }
+
+    bool CameraManager::get_focus(long& value) const {
+        if (!m_CameraControl) return false;
+        long flags;
+        HRESULT hr = m_CameraControl->Get(CameraControl_Focus, &value, &flags);
+        return SUCCEEDED(hr);
+    }
+
+    bool CameraManager::set_focus(long value) {
+        if (!m_CameraControl) return false;
+        HRESULT hr = m_CameraControl->Set(CameraControl_Focus, value, CameraControl_Flags_Manual);
+        return SUCCEEDED(hr);
     }
 
     bool CameraManager::negotiate_media_type(const Resolution& desired) {

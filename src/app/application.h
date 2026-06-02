@@ -56,6 +56,7 @@ namespace cc::app {
         void main_loop();
         void auto_detect_sensitivity();
         void print_startup_info() const;
+        void print_keyboard_controls() const;
     };
 }
 

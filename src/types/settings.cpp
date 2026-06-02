@@ -12,7 +12,8 @@ namespace cc {
             << static_cast<int>(s.m_ForegroundColor[0]) << ' '
             << static_cast<int>(s.m_ForegroundColor[1]) << ' '
             << static_cast<int>(s.m_ForegroundColor[2]) << '\n'
-            << s.m_ForegroundColorTolerance             << '\n';
+            << s.m_ForegroundColorTolerance             << '\n'
+            << s.m_FocusValue                           << '\n';
 
         return os;
     }
@@ -24,6 +25,7 @@ namespace cc {
         is >> s.m_SourceResolution;
         is >> fg0 >> fg1 >> fg2;
         is >> s.m_ForegroundColorTolerance;
+        is >> s.m_FocusValue;
 
         if (is.fail())
             return is;
