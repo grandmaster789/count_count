@@ -1,6 +1,8 @@
 #include "camera_manager.h"
 #include "util/logger.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <mfapi.h>
 #include <mfidl.h>
@@ -274,7 +276,90 @@ namespace cc::app {
             }
         }
 
+        // VideoProcAmp exposes white-balance and gain (exposure lives on
+        // IAMCameraControl above). Used to lock auto-adjustments during a focus sweep.
+        hr = media_source->QueryInterface(IID_PPV_ARGS(&m_VideoProcAmp));
+        if (FAILED(hr))
+            LOG_WARNING("IAMVideoProcAmp unavailable; white-balance/gain won't be locked during autofocus");
+
         return true;
+    }
+
+    void CameraManager::begin_focus_sweep() {
+        if (m_CameraControl) {
+            long val, flags;
+            if (SUCCEEDED(m_CameraControl->Get(CameraControl_Exposure, &val, &flags))) {
+                m_SavedExposure = val; m_SavedExposureFlags = flags; m_HaveSavedExposure = true;
+                m_CameraControl->Set(CameraControl_Exposure, val, CameraControl_Flags_Manual);
+            }
+        }
+        if (m_VideoProcAmp) {
+            long val, flags;
+            if (SUCCEEDED(m_VideoProcAmp->Get(VideoProcAmp_WhiteBalance, &val, &flags))) {
+                m_SavedWB = val; m_SavedWBFlags = flags; m_HaveSavedWB = true;
+                m_VideoProcAmp->Set(VideoProcAmp_WhiteBalance, val, VideoProcAmp_Flags_Manual);
+            }
+            if (SUCCEEDED(m_VideoProcAmp->Get(VideoProcAmp_Gain, &val, &flags))) {
+                m_SavedGain = val; m_SavedGainFlags = flags; m_HaveSavedGain = true;
+                m_VideoProcAmp->Set(VideoProcAmp_Gain, val, VideoProcAmp_Flags_Manual);
+            }
+        }
+        LOG_INFO("autofocus: locked exposure/WB/gain for the sweep");
+    }
+
+    void CameraManager::end_focus_sweep() {
+        if (m_CameraControl && m_HaveSavedExposure)
+            m_CameraControl->Set(CameraControl_Exposure, m_SavedExposure, m_SavedExposureFlags);
+        if (m_VideoProcAmp && m_HaveSavedWB)
+            m_VideoProcAmp->Set(VideoProcAmp_WhiteBalance, m_SavedWB, m_SavedWBFlags);
+        if (m_VideoProcAmp && m_HaveSavedGain)
+            m_VideoProcAmp->Set(VideoProcAmp_Gain, m_SavedGain, m_SavedGainFlags);
+        m_HaveSavedExposure = m_HaveSavedWB = m_HaveSavedGain = false;
+        LOG_INFO("autofocus: restored exposure/WB/gain");
+    }
+
+    bool CameraManager::grab_stable_frame(cc::Image& output,
+                                          int x0, int y0, int x1, int y1,
+                                          int max_discard, double eps) {
+        cc::Image prev;
+        if (!grab_frame(prev)) return false;
+
+        // Clamp ROI to the frame.
+        auto clamp_roi = [&](const cc::Image& img) {
+            x0 = std::max(0, std::min(x0, img.cols() - 1));
+            x1 = std::max(0, std::min(x1, img.cols() - 1));
+            y0 = std::max(0, std::min(y0, img.rows() - 1));
+            y1 = std::max(0, std::min(y1, img.rows() - 1));
+            if (x1 < x0) std::swap(x0, x1);
+            if (y1 < y0) std::swap(y0, y1);
+        };
+        clamp_roi(prev);
+
+        for (int i = 0; i < max_discard; ++i) {
+            if (!grab_frame(output)) return false;
+            if (output.channels() != 3 || prev.channels() != 3 ||
+                output.rows() != prev.rows() || output.cols() != prev.cols()) {
+                prev = output.clone();
+                continue;
+            }
+
+            double sum = 0.0; long n = 0;
+            for (int y = y0; y <= y1; ++y) {
+                const uint8_t* a = prev.ptr(y);
+                const uint8_t* b = output.ptr(y);
+                for (int x = x0; x <= x1; ++x) {
+                    int idx = x * 3;
+                    sum += std::abs((int)a[idx + 0] - (int)b[idx + 0])
+                         + std::abs((int)a[idx + 1] - (int)b[idx + 1])
+                         + std::abs((int)a[idx + 2] - (int)b[idx + 2]);
+                    ++n;
+                }
+            }
+            double mean_diff = (n > 0) ? sum / (3.0 * n) : 0.0;
+            if (mean_diff < eps) return true;   // settled
+            prev = output.clone();
+        }
+        return true;  // hit the discard cap; return the freshest frame anyway
     }
 
     bool CameraManager::get_focus_range(long& min, long& max, long& step) const {

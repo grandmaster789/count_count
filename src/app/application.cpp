@@ -12,6 +12,7 @@
 #include "processing/boundary_trace.h"
 #include "processing/auto_sensitivity.h"
 #include "processing/gear_template.h"
+#include "processing/focus.h"
 
 #include "gui/visualization.h"
 #include "gui/drawing.h"
@@ -125,6 +126,13 @@ namespace cc::app {
                     if (!m_CameraManager->grab_frame(m_SourceImage)) {
                         LOG_ERROR("Cannot retrieve frame from webcam");
                         break;
+                    }
+
+                    // Run the custom autofocus once, after the camera is up and
+                    // delivering frames (the built-in autofocus won't converge).
+                    if (!m_AutofocusDone) {
+                        autofocus();
+                        m_AutofocusDone = true;
                     }
                 }
                 else if (!static_image_loaded) {
@@ -264,6 +272,11 @@ namespace cc::app {
                     save_image(m_SourceImage, m_DataPath);
                     break;
 
+                case 'f':
+                case 'F':
+                    autofocus();
+                    break;
+
                 case 'a':
                 case 'A':
                     auto_detect_sensitivity();
@@ -351,6 +364,70 @@ namespace cc::app {
         LOG_INFO("Auto-detected saturation threshold: S >= {}", s_threshold);
     }
 
+    void Application::autofocus() {
+        if (!m_UseLiveVideo || !m_CameraManager->is_initialized()) {
+            LOG_INFO("Autofocus skipped (needs a live camera)");
+            return;
+        }
+
+        long min_f, max_f, step_f;
+        if (!m_CameraManager->get_focus_range(min_f, max_f, step_f)) {
+            LOG_WARNING("Autofocus: cannot read focus range");
+            return;
+        }
+        if (step_f <= 0) step_f = 1;
+
+        // Let auto-exposure/white-balance settle before locking them: right after the
+        // camera opens, exposure is usually still ramping for the first ~dozen frames,
+        // and locking a mid-convergence value would bias the whole sweep.
+        LOG_INFO("Autofocus: warming up (letting exposure settle)...");
+        {
+            cc::Image warm;
+            for (int i = 0; i < 15; ++i)
+                if (!m_CameraManager->grab_frame(warm)) break;
+        }
+
+        // Lock exposure/WB/gain so the sharpness metric isn't confounded by
+        // auto-exposure drift across the sweep.
+        m_CameraManager->begin_focus_sweep();
+
+        // Segment the gear once to fix the ROI (so the per-pixel metric compares
+        // focus to focus over a constant region, not a shifting one).
+        processing::FocusRoi roi;
+        {
+            cc::Image frame;
+            if (m_CameraManager->grab_frame(frame)) {
+                cc::Image mask(frame.rows(), frame.cols(), 1);
+                cc::Image fg(frame.rows(), frame.cols(), 3);
+                cc::Image blur(frame.rows(), frame.cols(), 1);
+                int s = processing::detect_saturation_threshold(frame);
+                processing::determine_foreground_by_saturation(s, frame, mask, fg, blur);
+                roi = processing::roi_from_mask(mask);
+            }
+        }
+        LOG_INFO("Autofocus: ROI [{},{}]-[{},{}], sweeping focus {}..{} step {} "
+                 "(window may be unresponsive for a few seconds)...",
+                 roi.x0, roi.y0, roi.x1, roi.y1, min_f, max_f, step_f);
+
+        cc::Image probe;
+        auto evaluate = [&](long f) -> double {
+            m_CameraManager->set_focus(f);
+            m_CameraManager->grab_stable_frame(probe, roi.x0, roi.y0, roi.x1, roi.y1);
+            double score = processing::focus_measure(probe, roi);
+            LOG_DEBUG("autofocus: focus={} score={:.1f}", f, score);
+            return score;
+        };
+
+        long best = processing::find_best_focus(min_f, max_f, step_f, evaluate);
+        m_CameraManager->set_focus(best);
+
+        m_CameraManager->end_focus_sweep();
+
+        m_SettingsManager->get().m_FocusValue = static_cast<int>(best);
+        m_SettingsManager->save();
+        LOG_INFO("Autofocus: converged on focus = {}", best);
+    }
+
     void Application::print_startup_info() const {
         LOG_INFO("Starting Counting...");
         LOG_INFO("Running on: {}",          ePlatform::current);
@@ -369,6 +446,7 @@ namespace cc::app {
         LOG_INFO("  ENTER     - Cycle display (Processed / Foreground mask)");
         LOG_INFO("  L         - Toggle live video / static image");
         LOG_INFO("  A         - Auto-calibrate saturation threshold (else auto each frame)");
+        LOG_INFO("  F         - Autofocus (contrast-detection focus sweep on the gear)");
         LOG_INFO("  G         - Save current frame as screenshot");
         LOG_INFO("  D         - Toggle debug logging");
         LOG_INFO("  [ / ]     - Adjust camera focus");

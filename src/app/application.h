@@ -32,8 +32,9 @@ namespace cc::app {
         std::unique_ptr<CameraManager>        m_CameraManager;
         std::unique_ptr<MainWindowController> m_UiController;
 
-        bool m_Running      = false;
-        bool m_UseLiveVideo = false; // set this to false to use a reference image instead
+        bool m_Running       = false;
+        bool m_UseLiveVideo  = false; // set this to false to use a reference image instead
+        bool m_AutofocusDone = false; // run the focus sweep once after camera init
 
         static constexpr size_t k_MinimumToothCount = 8;
         static constexpr size_t k_TemporalWindow    = 10;
@@ -61,6 +62,7 @@ namespace cc::app {
         void initialize_buffers(); // can only be done once the source image is set at least once
         void main_loop();
         void auto_detect_sensitivity();
+        void autofocus();          // contrast-detection focus sweep on the gear
         void print_startup_info() const;
         void print_keyboard_controls() const;
     };

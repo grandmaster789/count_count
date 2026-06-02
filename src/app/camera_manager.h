@@ -29,6 +29,20 @@ namespace cc::app {
         bool get_focus(long& value) const;
         bool set_focus(long value);
 
+        // Lock exposure / white-balance / gain to manual for the duration of a focus
+        // sweep so the sharpness metric isn't confounded by auto-exposure drift, then
+        // restore the prior settings. No-op for controls the camera doesn't expose.
+        void begin_focus_sweep();
+        void end_focus_sweep();
+
+        // Grab frames, discarding until two consecutive frames are near-identical over
+        // the (clamped) ROI bbox — i.e. the lens has settled and the buffered/stale
+        // MediaFoundation frames have drained — or max_discard is reached. The latest
+        // frame is returned in `output`. Returns false only if a grab fails.
+        bool grab_stable_frame(cc::Image& output,
+                               int x0, int y0, int x1, int y1,
+                               int max_discard = 10, double eps = 3.0);
+
     private:
         bool negotiate_media_type(const Resolution& desired);
         void query_stride();
@@ -40,7 +54,14 @@ namespace cc::app {
         int                                          m_Stride         = 0;
         Microsoft::WRL::ComPtr<IMFSourceReader>      m_SourceReader;
         Microsoft::WRL::ComPtr<IAMCameraControl>     m_CameraControl;
+        Microsoft::WRL::ComPtr<IAMVideoProcAmp>      m_VideoProcAmp;
         GUID                                         m_SubType        = {};
+
+        // Saved auto/manual state restored by end_focus_sweep().
+        long m_SavedExposure = 0, m_SavedExposureFlags = 0;
+        long m_SavedWB       = 0, m_SavedWBFlags       = 0;
+        long m_SavedGain     = 0, m_SavedGainFlags     = 0;
+        bool m_HaveSavedExposure = false, m_HaveSavedWB = false, m_HaveSavedGain = false;
     };
 }
 
