@@ -45,41 +45,6 @@ namespace cc::processing {
             return mean / stddev;
         }
 
-        int pick_largest(const std::vector<std::vector<cc::Point2i>>& contours, double min_area) {
-            int idx = -1;
-            double best = min_area;
-            for (size_t i = 0; i < contours.size(); ++i) {
-                double a = cc::math::polygon_area(contours[i]);
-                if (a > best) {
-                    best = a;
-                    idx  = static_cast<int>(i);
-                }
-            }
-            return idx;
-        }
-
-        int pick_nearest_to_center(
-            const std::vector<std::vector<cc::Point2i>>& contours,
-            double min_area, int cx, int cy)
-        {
-            int    idx       = -1;
-            double best_dist = std::numeric_limits<double>::infinity();
-            for (size_t i = 0; i < contours.size(); ++i) {
-                double a = cc::math::polygon_area(contours[i]);
-                if (a < min_area) continue;
-
-                double sum_x = 0.0, sum_y = 0.0;
-                for (const auto& p : contours[i]) { sum_x += p.x; sum_y += p.y; }
-                double n    = static_cast<double>(contours[i].size());
-                double dist = std::hypot(sum_x / n - cx, sum_y / n - cy);
-                if (dist < best_dist) {
-                    best_dist = dist;
-                    idx       = static_cast<int>(i);
-                }
-            }
-            return idx;
-        }
-
         int pick_most_circular(const std::vector<std::vector<cc::Point2i>>& contours, double min_area) {
             int idx = -1;
             double best_score = 0.0;
@@ -99,8 +64,7 @@ namespace cc::processing {
 
     std::optional<ContourResult> process_contours(
         const std::vector<std::vector<cc::Point2i>>& all_contours,
-              cc::Image&                             output_image,
-              e_ContourSelector                      selector
+              cc::Image&                             output_image
     ) {
         // minimum area filter: contour must be at least 1% of image area
         double image_area = static_cast<double>(output_image.rows()) * output_image.cols();
@@ -115,20 +79,7 @@ namespace cc::processing {
                       a < min_area ? " (below threshold)" : "");
         }
 
-        int chosen_idx;
-        switch (selector) {
-            case e_ContourSelector::most_circular:
-                chosen_idx = pick_most_circular(all_contours, min_area);
-                break;
-            case e_ContourSelector::nearest_to_center:
-                chosen_idx = pick_nearest_to_center(
-                    all_contours, min_area,
-                    output_image.cols() / 2, output_image.rows() / 2);
-                break;
-            default:
-                chosen_idx = pick_largest(all_contours, min_area);
-                break;
-        }
+        int chosen_idx = pick_most_circular(all_contours, min_area);
 
         if (chosen_idx < 0) {
             LOG_DEBUG("contours: no contour passed the selector");
@@ -196,8 +147,9 @@ namespace cc::processing {
             centroid_f
         );
 
-        int speculative = estimate_tooth_count(teeth);
-        LOG_DEBUG("contours: direct={} speculative={}", teeth.size(), speculative);
+        int speculative = fft_tooth_count(largest_contour, distances, centroid_f);
+        LOG_DEBUG("contours: direct={} speculative(fft)={}",
+                  teeth.size(), speculative);
 
         return ContourResult {
             .m_Teeth           = std::move(teeth),

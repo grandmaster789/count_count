@@ -246,28 +246,6 @@ TEST_CASE("find_tooth_start - two element mask", "[count_teeth]") {
 }
 
 // ---------------------------------------------------------------------------
-// estimate_tooth_count
-// ---------------------------------------------------------------------------
-
-namespace {
-    cc::ToothMeasurement tooth_at(double angle_rad) {
-        cc::ToothMeasurement t;
-        t.m_StartingAngle = angle_rad;
-        t.m_EndingAngle   = angle_rad;
-        t.m_MinDistance   = 40.0;
-        t.m_MaxDistance   = 50.0;
-        return t;
-    }
-
-    std::vector<cc::ToothMeasurement> teeth_from_degrees(std::initializer_list<double> degrees) {
-        std::vector<cc::ToothMeasurement> v;
-        for (double d : degrees)
-            v.push_back(tooth_at(d * std::numbers::pi / 180.0));
-        return v;
-    }
-}
-
-// ---------------------------------------------------------------------------
 // count_teeth span filter
 // ---------------------------------------------------------------------------
 
@@ -300,48 +278,67 @@ TEST_CASE("count_teeth - narrow noise spike is filtered out", "[count_teeth]") {
     REQUIRE(teeth.size() == 3);
 }
 
-TEST_CASE("estimate_tooth_count - too few teeth returns -1", "[count_teeth]") {
-    REQUIRE(estimate_tooth_count({}) == -1);
-    REQUIRE(estimate_tooth_count({ tooth_at(0.0) }) == -1);
+// ---------------------------------------------------------------------------
+// fft_tooth_count
+// ---------------------------------------------------------------------------
+
+namespace {
+    // Build a synthetic gear contour with the given tooth count. The radial
+    // distance profile is distance(θ) = base + amp * shape(N_teeth * θ), where
+    // shape is either a sinusoid (smooth) or a square wave (realistic teeth).
+    void make_gear_contour(
+        int N_teeth, size_t N_samples, double base, double amp, bool square_wave,
+        cc::Point2f centroid,
+        std::vector<cc::Point2i>& contour_out,
+        std::vector<double>& distances_out
+    ) {
+        contour_out.clear();
+        distances_out.clear();
+        contour_out.reserve(N_samples);
+        distances_out.reserve(N_samples);
+        for (size_t i = 0; i < N_samples; ++i) {
+            double angle = -std::numbers::pi + 2.0 * std::numbers::pi * static_cast<double>(i) / static_cast<double>(N_samples);
+            double r;
+            if (square_wave)
+                r = base + (std::sin(N_teeth * angle) >= 0 ? amp : -amp);
+            else
+                r = base + amp * std::cos(N_teeth * angle);
+            distances_out.push_back(r);
+            contour_out.push_back({
+                static_cast<int>(centroid.x + r * std::cos(angle)),
+                static_cast<int>(centroid.y + r * std::sin(angle))
+            });
+        }
+    }
 }
 
-TEST_CASE("estimate_tooth_count - exact uniform spacing", "[count_teeth]") {
-    // 8 teeth at 45° each → estimate = 8
-    REQUIRE(estimate_tooth_count(teeth_from_degrees({0, 45, 90, 135, 180, 225, 270, 315})) == 8);
-    // 12 teeth at 30° each → estimate = 12
-    REQUIRE(estimate_tooth_count(teeth_from_degrees({0,30,60,90,120,150,180,210,240,270,300,330})) == 12);
+TEST_CASE("fft_tooth_count - too few contour points returns -1", "[count_teeth]") {
+    std::vector<cc::Point2i> contour(10, {100, 100});
+    std::vector<double> distances(10, 50.0);
+    REQUIRE(fft_tooth_count(contour, distances, {0.0f, 0.0f}) == -1);
 }
 
-TEST_CASE("estimate_tooth_count - two teeth 180 deg apart", "[count_teeth]") {
-    // Both spacings are 180° → pitch=180° → count=2
-    REQUIRE(estimate_tooth_count(teeth_from_degrees({0, 180})) == 2);
+TEST_CASE("fft_tooth_count - sinusoidal radial profile", "[count_teeth]") {
+    cc::Point2f centroid(200.0f, 200.0f);
+    std::vector<cc::Point2i> contour;
+    std::vector<double> distances;
+
+    SECTION("24 teeth") {
+        make_gear_contour(24, 2000, 100.0, 20.0, false, centroid, contour, distances);
+        REQUIRE(fft_tooth_count(contour, distances, centroid) == 24);
+    }
+    SECTION("48 teeth") {
+        make_gear_contour(48, 3000, 150.0, 15.0, false, centroid, contour, distances);
+        REQUIRE(fft_tooth_count(contour, distances, centroid) == 48);
+    }
 }
 
-TEST_CASE("estimate_tooth_count - RANSAC recovers true count despite missed detections", "[count_teeth]") {
-    // True gear: 12 teeth at 30° pitch.  Detected only 7 of them.
-    // All observed spacings (30°, 60°, 90°) are multiples of 30°,
-    // so pitch=30° maximises inliers → estimate = 12.
-    auto teeth = teeth_from_degrees({0, 30, 60, 120, 150, 240, 330});
-    REQUIRE(estimate_tooth_count(teeth) == 12);
-}
-
-TEST_CASE("estimate_tooth_count - sub-harmonic collapses to fundamental", "[count_teeth]") {
-    // All spacings are exact multiples of the true pitch, so pitch/2 fits equally
-    // well as multiples of 2×. The collapse step must prefer the larger pitch.
-    // 8 teeth at 45°: pitch/2 = 22.5° also fits every 45° spacing as 2×22.5°.
-    REQUIRE(estimate_tooth_count(teeth_from_degrees({0, 45, 90, 135, 180, 225, 270, 315})) == 8);
-
-    // With missed teeth, spacings are mixed (30°, 60°, 90°) — all multiples of 30°.
-    // pitch/2=15° also fits each as 2×, 4×, 6× of 15°. Collapse must return 12.
-    auto teeth = teeth_from_degrees({0, 30, 60, 120, 150, 240, 330});
-    REQUIRE(estimate_tooth_count(teeth) == 12);
-}
-
-TEST_CASE("estimate_tooth_count - spurious near-pitch detection resolved by larger-pitch tie-break", "[count_teeth]") {
-    // True pitch 45° (8 teeth).  One detection shifted to 41° instead of 45°.
-    // Spacings: 41, 49, 45, 45, 45, 45, 45, 45 degrees.
-    // Both pitch=45° and pitch=41° collect 8 inliers (all within 25% tolerance).
-    // Tie broken by larger pitch → 45° wins → estimate = 8.
-    auto teeth = teeth_from_degrees({0, 41, 90, 135, 180, 225, 270, 315});
-    REQUIRE(estimate_tooth_count(teeth) == 8);
+TEST_CASE("fft_tooth_count - square-wave radial profile picks fundamental not harmonic", "[count_teeth]") {
+    // Square wave has strong harmonics at 3N, 5N, ... but the fundamental at N
+    // always dominates in power. Verifies the peak-picker returns N not 2N or 3N.
+    cc::Point2f centroid(0.0f, 0.0f);
+    std::vector<cc::Point2i> contour;
+    std::vector<double> distances;
+    make_gear_contour(16, 2000, 100.0, 25.0, true, centroid, contour, distances);
+    REQUIRE(fft_tooth_count(contour, distances, centroid) == 16);
 }

@@ -73,7 +73,7 @@ TEST_CASE("edge_mask - contour trace + most_circular selector picks the disc", "
     auto contours = find_contours(mask);
     REQUIRE(!contours.empty());
 
-    auto result = process_contours(contours, output, e_ContourSelector::most_circular);
+    auto result = process_contours(contours, output);
     REQUIRE(result.has_value());
 
     // Centroid should land near the true disc centre (within a few pixels).

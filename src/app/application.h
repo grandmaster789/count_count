@@ -35,12 +35,6 @@ namespace cc::app {
         bool m_Running      = false;
         bool m_UseLiveVideo = false; // set this to false to use a reference image instead
 
-        enum class e_SegmentationMode {
-            color_threshold,
-            edge_detection,
-            background_subtraction
-        } m_SegmentationMode = e_SegmentationMode::color_threshold;
-
         static constexpr size_t k_MinimumToothCount = 8;
         static constexpr size_t k_TemporalWindow    = 10;
 

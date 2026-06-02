@@ -19,12 +19,15 @@ namespace cc::processing {
         const cc::Point2f&                centroid_f
     );
 
-    // Estimates tooth count from the angular pitch of detected teeth.
-    // Takes the P25 of consecutive angular spacings as estimated pitch, then
-    // returns round(2π / pitch). More reliable than the direct count when the
-    // distance threshold merges adjacent teeth. Returns -1 if fewer than 2
-    // teeth are provided.
-    int estimate_tooth_count(const std::vector<ToothMeasurement>& teeth);
+    // Estimates tooth count by FFT of the radial distance profile.
+    // Resamples the contour to a uniform angular grid, finds the dominant
+    // frequency in the power spectrum, and maps it to a tooth count.
+    // Returns -1 if the contour is too small or covers less than half a revolution.
+    int fft_tooth_count(
+        const std::vector<cc::Point2i>& contour,
+        const std::vector<double>&      distances,
+        const cc::Point2f&              centroid
+    );
 }
 
 #endif

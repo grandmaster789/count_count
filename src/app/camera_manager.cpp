@@ -5,11 +5,17 @@
 #include <mfapi.h>
 #include <mfidl.h>
 #include <mfreadwrite.h>
+#include <strmif.h> // IAMCameraControl, CameraControl_Focus
 
 #pragma comment(lib, "mfplat.lib")
 #pragma comment(lib, "mf.lib")
 #pragma comment(lib, "mfreadwrite.lib")
 #pragma comment(lib, "mfuuid.lib")
+
+namespace {
+    template <typename T>
+    using ComPtr = Microsoft::WRL::ComPtr<T>;
+}
 
 namespace cc::app {
 
@@ -101,7 +107,7 @@ namespace cc::app {
             return;
         }
 
-        Microsoft::WRL::ComPtr<IMFMediaType> type;
+        ComPtr<IMFMediaType> type;
         HRESULT hr = m_SourceReader->GetCurrentMediaType(k_FirstVideoStream, &type);
         if (FAILED(hr)) {
             m_Stride = 0;
@@ -138,7 +144,7 @@ namespace cc::app {
         m_Initialized = false;
 
         // Enumerate video capture devices
-        Microsoft::WRL::ComPtr<IMFAttributes> attr;
+        ComPtr<IMFAttributes> attr;
         HRESULT hr = MFCreateAttributes(&attr, 1);
         if (FAILED(hr)) return false;
 
@@ -165,7 +171,7 @@ namespace cc::app {
         }
 
         // Create media source
-        Microsoft::WRL::ComPtr<IMFMediaSource> media_source;
+        ComPtr<IMFMediaSource> media_source;
         hr = devices[device_id]->ActivateObject(
             IID_PPV_ARGS(&media_source)
         );
@@ -211,7 +217,7 @@ namespace cc::app {
             if (!found) {
                 LOG_WARNING("Could not set preferred resolution, using camera default");
                 // Accept whatever the camera gives us
-                Microsoft::WRL::ComPtr<IMFMediaType> current_type;
+                ComPtr<IMFMediaType> current_type;
                 hr = m_SourceReader->GetCurrentMediaType(
                     k_FirstVideoStream,
                     &current_type
@@ -234,6 +240,37 @@ namespace cc::app {
         query_stride();
         m_Initialized = true;
         LOG_INFO("Camera initialized at {}x{}, stride={}", m_Resolution.m_Width, m_Resolution.m_Height, m_Stride);
+
+        // Set focus to manual mode
+        // (https://learn.microsoft.com/en-us/windows/win32/api/strmif/nn-strmif-iamcameracontrol)
+        ComPtr<IAMCameraControl> camera_control;
+        hr = media_source->QueryInterface(IID_PPV_ARGS(&camera_control));
+        if (SUCCEEDED(hr)) {
+            // query the focus range
+            long min_focus, max_focus, step, default_value, capabilities;
+            hr = camera_control->GetRange(
+                CameraControl_Focus,
+                &min_focus,
+                &max_focus,
+                &step,
+                &default_value,
+                &capabilities
+            );
+
+            if (SUCCEEDED(hr)) {
+                LOG_INFO("Focus range: min={}, max={}, step={}, default={}, capabilities=0x{:08x}",
+                         min_focus, max_focus, step, default_value, capabilities);
+            }
+
+            // set manual focus at a specific distance
+            // for a Razer Kiyo Pro the range is 0 to 600
+            hr = camera_control->Set(
+                CameraControl_Focus,
+                200,
+                CameraControl_Flags_Manual
+            );
+        }
+
         return true;
     }
 
@@ -242,7 +279,7 @@ namespace cc::app {
 
         // Iterate through available media types to find a matching resolution
         for (DWORD i = 0; ; ++i) {
-            Microsoft::WRL::ComPtr<IMFMediaType> media_type;
+            ComPtr<IMFMediaType> media_type;
             HRESULT hr = m_SourceReader->GetNativeMediaType(
                 k_FirstVideoStream,
                 i,
@@ -285,7 +322,7 @@ namespace cc::app {
             return false;
         }
 
-        Microsoft::WRL::ComPtr<IMFSample> sample;
+        ComPtr<IMFSample> sample;
         DWORD stream_index = 0;
         DWORD flags = 0;
         LONGLONG timestamp = 0;
@@ -351,7 +388,7 @@ namespace cc::app {
             return false;
         }
 
-        Microsoft::WRL::ComPtr<IMFMediaBuffer> buffer;
+        ComPtr<IMFMediaBuffer> buffer;
         hr = sample->ConvertToContiguousBuffer(&buffer);
         if (FAILED(hr)) {
             LOG_ERROR("grab_frame: ConvertToContiguousBuffer failed: hr=0x{:08x}",

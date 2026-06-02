@@ -7,7 +7,6 @@
 #include "platform/build_date.h"
 
 #include "processing/foreground.h"
-#include "processing/edge_mask.h"
 #include "processing/anomalies.h"
 #include "processing/contours.h"
 #include "processing/boundary_trace.h"
@@ -141,38 +140,16 @@ namespace cc::app {
                 std::memcpy(m_OutputImage.data(), m_SourceImage.data(), m_SourceImage.total_bytes());
 
                 // ----- video processing -----
-                switch (m_SegmentationMode) {
-                    case e_SegmentationMode::edge_detection:
-                        processing::determine_foreground_by_edges(
-                            settings.m_ForegroundColorTolerance,
-                            m_SourceImage,
-                            m_ForegroundMask,
-                            m_Foreground
-                        );
-                        break;
-                    case e_SegmentationMode::background_subtraction:
-                        processing::determine_foreground(
-                            settings.m_ForegroundColor,
-                            settings.m_ForegroundColorTolerance,
-                            m_SourceImage,
-                            m_ForegroundMask,
-                            m_Foreground,
-                            m_BlurTemp,
-                            true,  // invert: target is background, mask output covers the gear
-                            true   // use_chebyshev: tolerance is a BGR distance, not hue range
-                        );
-                        break;
-                    default: // color_threshold
-                        processing::determine_foreground(
-                            settings.m_ForegroundColor,
-                            settings.m_ForegroundColorTolerance,
-                            m_SourceImage,
-                            m_ForegroundMask,
-                            m_Foreground,
-                            m_BlurTemp
-                        );
-                        break;
-                }
+                processing::determine_foreground(
+                    settings.m_ForegroundColor,
+                    settings.m_ForegroundColorTolerance,
+                    m_SourceImage,
+                    m_ForegroundMask,
+                    m_Foreground,
+                    m_BlurTemp,
+                    true,  // invert: target is background, mask output covers the gear
+                    true   // use_chebyshev: tolerance is a BGR distance, not hue range
+                );
 
                 {
                     int filled = 0;
@@ -190,24 +167,10 @@ namespace cc::app {
                 auto contours = processing::find_contours(m_ForegroundMask);
                 LOG_DEBUG("boundary trace: {} contour(s) found", contours.size());
 
-                processing::e_ContourSelector selector;
-                switch (m_SegmentationMode) {
-                    case e_SegmentationMode::edge_detection:
-                        selector = processing::e_ContourSelector::most_circular;
-                        break;
-                    case e_SegmentationMode::background_subtraction:
-                        selector = processing::e_ContourSelector::nearest_to_center;
-                        break;
-                    default:
-                        selector = processing::e_ContourSelector::largest_by_area;
-                        break;
-                }
-
                 if (!contours.empty()) {
                     auto maybe_result = processing::process_contours(
                         contours,
-                        m_OutputImage,
-                        selector
+                        m_OutputImage
                     );
 
                     if (maybe_result) {
@@ -292,24 +255,6 @@ namespace cc::app {
 
                     break;
 
-                case 'e':
-                case 'E':
-                    switch (m_SegmentationMode) {
-                        case e_SegmentationMode::color_threshold:
-                            m_SegmentationMode = e_SegmentationMode::edge_detection;
-                            LOG_INFO("Segmentation mode: edges (Sobel)");
-                            break;
-                        case e_SegmentationMode::edge_detection:
-                            m_SegmentationMode = e_SegmentationMode::background_subtraction;
-                            LOG_INFO("Segmentation mode: background subtraction");
-                            break;
-                        case e_SegmentationMode::background_subtraction:
-                            m_SegmentationMode = e_SegmentationMode::color_threshold;
-                            LOG_INFO("Segmentation mode: colour threshold");
-                            break;
-                    }
-                    break;
-
                 case 'd':
                 case 'D': {
                     auto& logger = cc::util::Logger::instance();
@@ -349,9 +294,7 @@ namespace cc::app {
         if (m_SourceImage.empty())
             return;
 
-        auto result = (m_SegmentationMode == e_SegmentationMode::background_subtraction)
-            ? processing::detect_background_sensitivity(m_SourceImage)
-            : processing::detect_sensitivity(m_SourceImage);
+        auto result = processing::detect_background_sensitivity(m_SourceImage);
 
         if (!result.valid) {
             LOG_WARNING("Auto-sensitivity detection failed — no usable values found");

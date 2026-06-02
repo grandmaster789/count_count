@@ -2,7 +2,35 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <numbers>
+
+namespace {
+    // Cooley-Tukey radix-2 iterative FFT; N must be a power of 2.
+    void fft_inplace(std::vector<std::complex<double>>& x) {
+        const size_t N = x.size();
+        for (size_t i = 1, j = 0; i < N; ++i) {
+            size_t bit = N >> 1;
+            for (; j & bit; bit >>= 1) j ^= bit;
+            j ^= bit;
+            if (i < j) std::swap(x[i], x[j]);
+        }
+        for (size_t len = 2; len <= N; len <<= 1) {
+            double ang = -2.0 * std::numbers::pi / static_cast<double>(len);
+            std::complex<double> wlen(std::cos(ang), std::sin(ang));
+            for (size_t i = 0; i < N; i += len) {
+                std::complex<double> w(1.0, 0.0);
+                for (size_t j = 0; j < len / 2; ++j) {
+                    auto u = x[i + j];
+                    auto v = x[i + j + len / 2] * w;
+                    x[i + j]           = u + v;
+                    x[i + j + len / 2] = u - v;
+                    w *= wlen;
+                }
+            }
+        }
+    }
+}
 
 namespace cc::processing {
     // find the first (low) position where the mask changes from low to high
@@ -127,74 +155,77 @@ namespace cc::processing {
         return teeth;
     }
 
-    int estimate_tooth_count(const std::vector<ToothMeasurement>& teeth) {
-        if (teeth.size() < 2)
+    int fft_tooth_count(
+        const std::vector<cc::Point2i>& contour,
+        const std::vector<double>&      distances,
+        const cc::Point2f&              centroid
+    ) {
+        const size_t n = contour.size();
+        if (n < 32 || distances.size() != n)
             return -1;
 
-        std::vector<double> angles;
-        angles.reserve(teeth.size());
-        for (const auto& t : teeth)
-            angles.push_back(t.m_StartingAngle);
-        std::sort(angles.begin(), angles.end());
-
-        std::vector<double> spacings;
-        spacings.reserve(angles.size());
-        for (size_t i = 0; i < angles.size(); ++i) {
-            double delta = angles[(i + 1) % angles.size()] - angles[i];
-            if (delta <= 0.0) delta += 2.0 * std::numbers::pi;
-            spacings.push_back(delta);
+        // Sort (angle, distance) pairs by atan2 angle. Using sorted atan2 rather
+        // than unwrapped traversal order handles CW/CCW contours uniformly and
+        // avoids the multi-revolution unwrap edge case. For star-shaped gear
+        // contours the atan2 mapping is single-valued, so this is exact.
+        std::vector<std::pair<double, double>> profile;
+        profile.reserve(n);
+        for (size_t i = 0; i < n; ++i) {
+            double a = std::atan2(
+                static_cast<double>(contour[i].y) - centroid.y,
+                static_cast<double>(contour[i].x) - centroid.x
+            );
+            profile.emplace_back(a, distances[i]);
         }
+        std::sort(profile.begin(), profile.end());
 
-        // Search over integer tooth counts N directly.  For each N, the implied
-        // pitch is exactly 2π/N — satisfying the physical constraint that N teeth
-        // fill one full revolution.  Each observed spacing must then be a positive
-        // integer multiple of that pitch (k=1 for adjacent detected teeth, k>1
-        // where teeth were merged or missed by the direct counter).
-        //
-        // Searching over integer N rather than over pitch values makes sub-harmonic
-        // collapse implicit: N=36 is considered independently of N=72, and because
-        // single-pitch spacings map to k=0.5 for N=36 (rejected), N=72 naturally
-        // collects more inliers.  When inlier counts tie (e.g. N=72 vs N=144 on a
-        // perfect gear), the smaller total residual of N=72 breaks the tie — each
-        // spacing is 2× as far from its nearest integer multiple when seen through
-        // the N=144 pitch.
-        constexpr double k_Tolerance = 0.25; // fraction of candidate pitch
-        constexpr int    k_MaxMissed = 5;    // max consecutive missed teeth in one gap
+        const double a_start = profile.front().first;
+        const double a_end   = profile.back().first;
+        const double a_range = a_end - a_start;
+        if (a_range < std::numbers::pi)
+            return -1;
 
-        double min_spacing = *std::min_element(spacings.begin(), spacings.end());
-        double max_spacing = *std::max_element(spacings.begin(), spacings.end());
-
-        int N_min = std::max(2, static_cast<int>(std::floor(2.0 * std::numbers::pi / max_spacing)));
-        int N_max = std::min(500,
-                        static_cast<int>(std::ceil(2.0 * std::numbers::pi / min_spacing)) * k_MaxMissed);
-
-        int    best_N        = static_cast<int>(teeth.size());
-        int    best_inliers  = 0;
-        double best_residual = std::numeric_limits<double>::max();
-
-        for (int N = N_min; N <= N_max; ++N) {
-            double pitch = 2.0 * std::numbers::pi / static_cast<double>(N);
-
-            int    inliers  = 0;
-            double residual = 0.0;
-            for (double s : spacings) {
-                double nearest = std::round(s / pitch);
-                double err     = std::abs(s / pitch - nearest);
-                if (nearest >= 1.0 && err < k_Tolerance) {
-                    ++inliers;
-                    residual += err;
-                }
-            }
-
-            if (inliers > best_inliers ||
-                (inliers == best_inliers && residual < best_residual))
-            {
-                best_N        = N;
-                best_inliers  = inliers;
-                best_residual = residual;
+        // Resample to k_FFT_N uniform angular bins via linear interpolation.
+        // Denominator k_FFT_N (not k_FFT_N-1) gives DFT-correct spacing: N
+        // samples over one period, with sample N implicitly wrapping to sample 0.
+        constexpr size_t k_FFT_N = 1024;
+        std::vector<std::complex<double>> signal(k_FFT_N);
+        {
+            size_t ci = 0;
+            for (size_t k = 0; k < k_FFT_N; ++k) {
+                double target = a_start + static_cast<double>(k) * a_range / static_cast<double>(k_FFT_N);
+                while (ci + 1 < n - 1 && profile[ci + 1].first < target)
+                    ++ci;
+                double da = profile[ci + 1].first - profile[ci].first;
+                double t  = (da > 1e-9) ? (target - profile[ci].first) / da : 0.0;
+                t = std::clamp(t, 0.0, 1.0);
+                signal[k] = profile[ci].second * (1.0 - t) + profile[ci + 1].second * t;
             }
         }
 
-        return best_N;
+        fft_inplace(signal);
+
+        // Bin k covers k cycles over a_range radians → k * 2π / a_range teeth.
+        // a_range ≈ 2π for a full revolution, so the scaling correction is tiny
+        // but kept for correctness when the contour covers less than a full turn.
+        constexpr int k_MinTeeth = 4;
+        constexpr int k_MaxTeeth = 500;
+
+        int    best_count = -1;
+        double best_power = 0.0;
+        for (size_t k = 1; k <= k_FFT_N / 2; ++k) {
+            int count = static_cast<int>(
+                std::round(static_cast<double>(k) * 2.0 * std::numbers::pi / a_range)
+            );
+            if (count < k_MinTeeth || count > k_MaxTeeth)
+                continue;
+            double power = std::norm(signal[k]);
+            if (power > best_power) {
+                best_power = power;
+                best_count = count;
+            }
+        }
+
+        return best_count;
     }
 }
