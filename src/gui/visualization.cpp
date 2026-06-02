@@ -7,8 +7,8 @@
 
 namespace {
     // Compute the angular midpoint between two angles, handling the 0/2pi wrap
-    double angle_midpoint(double a, double b) {
-        double diff = b - a;
+    double angle_midpoint(const double a, const double b) {
+        const double diff = b - a;
         double wrapped = std::fmod(diff, 2.0 * std::numbers::pi);
         if (wrapped < 0.0) wrapped += 2.0 * std::numbers::pi;
         return a + wrapped / 2.0;
@@ -17,20 +17,20 @@ namespace {
 
 namespace cc {
     void draw_gear_arrow(
-        cc::Image&         output_image,
-        const cc::Point2d& gear_center,
-        double             gear_radius,
-        double             angle,
-        const cc::Color3&  color,
-        int                thickness
+        Image&         output_image,
+        const Point2d& gear_center,
+        const double   gear_radius,
+        const double   angle,
+        const Color3&  color,
+        const int      thickness
     ) {
         // determine intersection from the center with the circle at radius
-        cc::Point2i to(
+        const Point2i to(
             static_cast<int>(gear_center.x + 0.95 * gear_radius * std::cos(angle)),
             static_cast<int>(gear_center.y + 0.95 * gear_radius * std::sin(angle))
         );
 
-        cc::Point2i from(
+        const Point2i from(
             static_cast<int>(gear_center.x + 0.5 * gear_radius * std::cos(angle)),
             static_cast<int>(gear_center.y + 0.5 * gear_radius * std::sin(angle))
         );
@@ -47,22 +47,19 @@ namespace cc {
     }
 
     void display_results(
-        cc::Point2i                              centroid_i,
-        const std::vector<cc::ToothMeasurement>& teeth,
-        const std::vector<uint8_t>&              tooth_anomaly_mask,
-        cc::Image&                               output_image,
-        int                                      speculative_count,
-        int                                      direct_count,
-        double                                   fit_score
+        Point2i                              centroid_i,
+        const std::vector<ToothMeasurement>& teeth,
+        const std::vector<uint8_t>&          tooth_anomaly_mask,
+        Image&                               output_image,
+        int                                  speculative_count,
+        int                                  direct_count,
+        double                               fit_score
     ) {
         // Scale font relative to image height so text is readable at any resolution
         double k_FontScale     = std::max(2.0, output_image.rows() / 100.0);
         int    k_FontThickness = std::max(2, static_cast<int>(k_FontScale));
 
-        const uint8_t k_GoodB = 0,   k_GoodG = 255, k_GoodR = 0;   // green
-        const uint8_t k_BadB  = 0,   k_BadG  = 0,   k_BadR  = 255; // red
-        const uint8_t k_GapB  = 255, k_GapG  = 0,   k_GapR  = 255; // purple
-        const uint8_t k_BgB   = 0,   k_BgG   = 0,   k_BgR   = 0;  // black
+        constexpr uint8_t k_BgB   = 0,   k_BgG   = 0,   k_BgR   = 0;  // black
 
         // draw the center
         drawing::draw_circle(
@@ -78,9 +75,9 @@ namespace cc {
         size_t num_gap_anomalies = 0;
 
         for (auto anomaly : tooth_anomaly_mask) {
-            if (anomaly & cc::ToothAnomaly::gap)
+            if (anomaly & gap)
                 ++num_gap_anomalies;
-            if (anomaly & cc::ToothAnomaly::arc)
+            if (anomaly & arc)
                 ++num_arc_anomalies;
         }
 
@@ -89,19 +86,23 @@ namespace cc {
             const auto& measurement       = teeth[i];
             const auto& anomaly_detection = tooth_anomaly_mask[i];
 
-            if (anomaly_detection & cc::ToothAnomaly::arc) {
+            if (anomaly_detection & arc) {
                 draw_gear_arrow(
                     output_image,
-                    cc::Point2d(centroid_i.x, centroid_i.y),
+                    Point2d(centroid_i.x, centroid_i.y),
                     measurement.m_MinDistance,
                     angle_midpoint(measurement.m_StartingAngle, measurement.m_EndingAngle),
-                    cc::Color3(255, 255, 127)
+                    Color3(255, 255, 127)
                 );
             }
 
-            if (anomaly_detection & cc::ToothAnomaly::gap) {
+            if (anomaly_detection & gap) {
+                constexpr uint8_t k_GapR  = 255;
+                constexpr uint8_t k_GapG  = 0;
+                constexpr uint8_t k_GapB  = 255;
+
                 auto gear_point = [centroid_i, measurement](double angle) {
-                    return cc::Point2i(
+                    return Point2i(
                         centroid_i.x + static_cast<int>(measurement.m_MinDistance * std::cos(angle)),
                         centroid_i.y + static_cast<int>(measurement.m_MinDistance * std::sin(angle))
                     );
@@ -136,9 +137,9 @@ namespace cc {
 
         // Headline the FFT pitch estimate (speculative_count) whenever it is valid:
         // it is the reliable count for fine-toothed gears where the direct
-        // rising-edge count aliases (e.g. it reads 19 on an 84-tooth gear). The
+        // rising-edge count aliases (e.g., it reads 19 on an 84-tooth gear). The
         // direct count is shown as a parenthetical when it disagrees. When the FFT
-        // is unavailable we fall back to the direct count.
+        // is unavailable, we fall back to the direct count.
         int  direct    = (direct_count >= 0) ? direct_count : static_cast<int>(teeth.size());
         bool fft_valid = speculative_count > 0;
 
@@ -163,39 +164,57 @@ namespace cc {
         // Thin-ring gears fit lower than solid discs (less body to match), so the
         // flag sits below the lowest clean real gear (~0.52) while still catching
         // genuinely poor matches.
-        const double k_LowConfidenceFit = 0.40;
+        constexpr double k_LowConfidenceFit = 0.40;
         bool low_confidence = (fit_score >= 0.0 && fit_score < k_LowConfidenceFit);
         if (fit_score >= 0.0)
-            message += std::format("  {}%", (int)std::lround(fit_score * 100.0));
+            message += std::format("  {}%", static_cast<int>(std::lround(fit_score * 100.0)));
 
-        auto text_size = drawing::measure_text(message, k_FontScale);
+        auto [width, height] = drawing::measure_text(message, k_FontScale);
         int shadow_offset = std::max(2, static_cast<int>(k_FontScale / 2));
         int padding = shadow_offset * 2;
 
-        cc::Point2i text_pos(
-            centroid_i.x - text_size.width / 2,
-            centroid_i.y - text_size.height / 2
+        Point2i text_pos(
+            output_image.cols() - width - padding - shadow_offset,
+            output_image.rows() - height -padding - shadow_offset
         );
 
         // draw a background rectangle for readability
-        for (int y = text_pos.y - padding; y < text_pos.y + text_size.height + padding + shadow_offset; ++y)
-            for (int x = text_pos.x - padding; x < text_pos.x + text_size.width + padding + shadow_offset; ++x)
+        for (int y = text_pos.y - padding; y < text_pos.y + height + padding + shadow_offset; ++y)
+            for (int x = text_pos.x - padding; x < text_pos.x + width + padding + shadow_offset; ++x)
                 drawing::set_pixel(output_image, x, y, k_BgB, k_BgG, k_BgR);
 
         // shadow
         drawing::draw_text(
             output_image,
             message,
-            cc::Point2i(text_pos.x + shadow_offset, text_pos.y + shadow_offset),
+            Point2i(text_pos.x + shadow_offset, text_pos.y + shadow_offset),
             40, 40, 40,
             k_FontScale,
             k_FontThickness
         );
 
         uint8_t tb, tg, tr;
-        if (has_anomaly)         { tb = k_BadB; tg = k_BadG; tr = k_BadR; }
-        else if (low_confidence) { tb = 0;      tg = 170;    tr = 255;    } // amber warning
-        else                     { tb = k_GoodB; tg = k_GoodG; tr = k_GoodR; }
+        if (has_anomaly)         {
+            constexpr uint8_t k_BadR  = 255;
+            constexpr uint8_t k_BadG  = 0;
+            constexpr uint8_t k_BadB  = 0;
+            tb = k_BadB;
+            tg = k_BadG;
+            tr = k_BadR;
+        }
+        else if (low_confidence) {
+            tb = 0;
+            tg = 170;
+            tr = 255;
+        } // amber warning
+        else                     {
+            constexpr uint8_t k_GoodR = 0;
+            constexpr uint8_t k_GoodG = 255;
+            constexpr uint8_t k_GoodB = 0;
+            tb = k_GoodB;
+            tg = k_GoodG;
+            tr = k_GoodR;
+        }
 
         drawing::draw_text(
             output_image,
