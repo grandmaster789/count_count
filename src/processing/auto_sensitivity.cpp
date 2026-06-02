@@ -94,6 +94,19 @@ namespace {
         return cc::Color3(fg_b * 8 + 4, fg_g * 8 + 4, fg_r * 8 + 4);
     }
 
+    // Saturation-threshold calibration tunables.
+    constexpr int k_SatDefault = 45;  // fallback when no clear background peak
+    constexpr int k_SatMargin  = 8;   // push past the background shoulder into the valley
+    constexpr int k_SatMin     = 25;  // never threshold below this (achromatic noise floor)
+    constexpr int k_SatMax     = 180; // never threshold above this (would erode the object)
+
+    // Saturation, OpenCV convention: S = (V - min) * 255 / V.
+    inline int saturation_of(int b, int g, int r) {
+        int vi = std::max({b, g, r});
+        int mi = std::min({b, g, r});
+        return (vi == 0) ? 0 : ((vi - mi) * 255 + vi / 2) / vi;
+    }
+
     int find_optimal_tolerance(const cc::Image& image, const cc::Color3& target_color) {
         std::array<int, 256> dist_hist {};
 
@@ -180,5 +193,49 @@ namespace cc::processing {
 
         bool valid = tolerance > 0 && tolerance <= 255;
         return { color, tolerance, valid };
+    }
+
+    int detect_saturation_threshold(const cc::Image& source_image) {
+        if (source_image.empty() || source_image.channels() != 3)
+            return k_SatDefault;
+
+        std::array<long, 256> hist {};
+        long total = 0;
+        for (int y = 0; y < source_image.rows(); y += k_Subsample) {
+            const uint8_t* row = source_image.ptr(y);
+            for (int x = 0; x < source_image.cols(); x += k_Subsample) {
+                const uint8_t* px = row + static_cast<size_t>(x) * 3;
+                int s = saturation_of(px[0], px[1], px[2]);
+                ++hist[static_cast<size_t>(s)];
+                ++total;
+            }
+        }
+        if (total == 0)
+            return k_SatDefault;
+
+        // Background = the dominant low-saturation peak.
+        auto peak_it  = std::max_element(hist.begin(), hist.end());
+        int  peak_bin = static_cast<int>(std::distance(hist.begin(), peak_it));
+        long peak_val = *peak_it;
+
+        // If the dominant peak is already saturated, there is no achromatic
+        // background to separate from — fall back to the default.
+        if (peak_bin > 128 || peak_val == 0)
+            return k_SatDefault;
+
+        // Walk up from the background peak until its tail falls to a small
+        // fraction of the peak height: that bin is the shoulder of the
+        // background cluster, i.e. the valley before the object's saturation mode.
+        long floor = std::max<long>(1, peak_val / 100);  // 1% of peak
+        int shoulder = peak_bin;
+        for (int s = peak_bin; s < 256; ++s) {
+            if (hist[static_cast<size_t>(s)] <= floor) {
+                shoulder = s;
+                break;
+            }
+        }
+
+        int threshold = shoulder + k_SatMargin;
+        return std::clamp(threshold, k_SatMin, k_SatMax);
     }
 }

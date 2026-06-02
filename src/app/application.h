@@ -38,6 +38,12 @@ namespace cc::app {
         static constexpr size_t k_MinimumToothCount = 8;
         static constexpr size_t k_TemporalWindow    = 10;
 
+        // Trackbar/tolerance values below this are treated as "auto-calibrate the
+        // saturation threshold each frame" rather than a manual S threshold. Below
+        // ~25 a saturation threshold would flood the mask with low-S background, so
+        // such values never make sense as a manual setting anyway.
+        static constexpr int k_AutoSaturationBelow = 25;
+
         enum class e_ShowImage {
             processed_image,
             foreground

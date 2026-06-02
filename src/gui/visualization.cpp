@@ -133,25 +133,25 @@ namespace cc {
         bool has_anomaly = (num_gap_anomalies > 0 || num_arc_anomalies > 0);
         size_t expected_count = teeth.size() + num_gap_anomalies + num_arc_anomalies;
 
-        // Prefer the temporally-smoothed direct count when available (no anomalies).
-        int effective_direct = (direct_count >= 0 && !has_anomaly)
-            ? direct_count
-            : static_cast<int>(teeth.size());
-
-        // Use the speculative count when it differs meaningfully from the direct count
-        // (more than 10% off). The direct count understates when adjacent teeth merge.
-        bool use_speculative = speculative_count > 0 &&
-            std::abs(speculative_count - effective_direct) > effective_direct / 10;
+        // Headline the FFT pitch estimate (speculative_count) whenever it is valid:
+        // it is the reliable count for fine-toothed gears where the direct
+        // rising-edge count aliases (e.g. it reads 19 on an 84-tooth gear). The
+        // direct count is shown as a parenthetical when it disagrees. When the FFT
+        // is unavailable we fall back to the direct count.
+        int  direct    = (direct_count >= 0) ? direct_count : static_cast<int>(teeth.size());
+        bool fft_valid = speculative_count > 0;
 
         std::string message;
-        if (has_anomaly) {
+        if (fft_valid) {
+            message = std::format("{}", speculative_count);
+            if (has_anomaly)
+                message += std::format(" ({}/{})", teeth.size(), expected_count);
+            else if (speculative_count != direct)
+                message += std::format(" (direct {})", direct);
+        } else if (has_anomaly) {
             message = std::format("{}/{}", teeth.size(), expected_count);
-            if (use_speculative)
-                message += std::format(" (~{})", speculative_count);
-        } else if (use_speculative) {
-            message = std::format("{} (~{})", effective_direct, speculative_count);
         } else {
-            message = std::format("{}/{}", effective_direct, effective_direct);
+            message = std::format("{}/{}", direct, direct);
         }
 
         auto text_size = drawing::measure_text(message, k_FontScale);

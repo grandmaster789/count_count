@@ -102,7 +102,8 @@ TEST_CASE("display_results - renders centroid marker and tooth count text", "[vi
 }
 
 TEST_CASE("display_results - speculative count label is wider than matching count label", "[visualization]") {
-    // "8 (~72)" has more characters than "8/8", so the rendered label occupies more pixels.
+    // FFT count headlines: spec==direct(8) renders "8"; spec=72 vs direct 8 renders
+    // "72 (direct 8)", which occupies more pixels.
     auto teeth = uniform_teeth(8);
     std::vector<uint8_t> anomaly_mask(teeth.size(), cc::ToothAnomaly::none);
     cc::Point2i centroid{150, 150};
@@ -110,8 +111,8 @@ TEST_CASE("display_results - speculative count label is wider than matching coun
     cc::Image img_match = white_image(300, 300);
     cc::Image img_spec  = white_image(300, 300);
 
-    cc::display_results(centroid, teeth, anomaly_mask, img_match, 8);  // same  → "8/8"
-    cc::display_results(centroid, teeth, anomaly_mask, img_spec,  72); // wider → "8 (~72)"
+    cc::display_results(centroid, teeth, anomaly_mask, img_match, 8);  // spec==direct → "8"
+    cc::display_results(centroid, teeth, anomaly_mask, img_spec,  72); // wider        → "72 (direct 8)"
 
     int pixels_match = count_non_white_near(img_match, 150, 150, 100);
     int pixels_spec  = count_non_white_near(img_spec,  150, 150, 100);

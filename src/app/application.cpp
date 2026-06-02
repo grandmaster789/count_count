@@ -140,15 +140,25 @@ namespace cc::app {
                 std::memcpy(m_OutputImage.data(), m_SourceImage.data(), m_SourceImage.total_bytes());
 
                 // ----- video processing -----
-                processing::determine_foreground(
-                    settings.m_ForegroundColor,
-                    settings.m_ForegroundColorTolerance,
+                // Saturation segmentation: the chromatic gear is high-saturation, the
+                // achromatic grey/white background is low-saturation. Matte-surface
+                // shadows move value (V), not saturation (S), so this is shadow-robust
+                // where BGR Chebyshev distance leaked shadows into the mask.
+                //
+                // The trackbar value (m_ForegroundColorTolerance, 0..255) doubles as a
+                // manual S threshold; values below k_AutoSaturationBelow mean
+                // "auto-calibrate from this frame" — the robust default that works
+                // whether or not the user has pressed 'A' or tuned the slider.
+                int s_threshold = settings.m_ForegroundColorTolerance;
+                if (s_threshold < k_AutoSaturationBelow)
+                    s_threshold = processing::detect_saturation_threshold(m_SourceImage);
+
+                processing::determine_foreground_by_saturation(
+                    s_threshold,
                     m_SourceImage,
                     m_ForegroundMask,
                     m_Foreground,
-                    m_BlurTemp,
-                    true,  // invert: target is background, mask output covers the gear
-                    true   // use_chebyshev: tolerance is a BGR distance, not hue range
+                    m_BlurTemp
                 );
 
                 {
@@ -313,22 +323,16 @@ namespace cc::app {
         if (m_SourceImage.empty())
             return;
 
-        auto result = processing::detect_background_sensitivity(m_SourceImage);
+        // Calibrate the saturation threshold from the current frame and freeze it
+        // into the trackbar/settings so the segmentation uses a fixed value until
+        // the user changes it. (Without pressing 'A', main_loop auto-calibrates
+        // every frame.)
+        int s_threshold = processing::detect_saturation_threshold(m_SourceImage);
 
-        if (!result.valid) {
-            LOG_WARNING("Auto-sensitivity detection failed — no usable values found");
-            return;
-        }
+        m_SettingsManager->get().m_ForegroundColorTolerance = s_threshold;
+        m_UiController->set_trackbar_position(s_threshold);
 
-        m_SettingsManager->set_selected_color(result.color);
-        m_SettingsManager->get().m_ForegroundColorTolerance = result.tolerance;
-        m_UiController->set_trackbar_position(result.tolerance);
-
-        LOG_INFO("Auto-detected color: BGR({},{},{}) tolerance: {}",
-            static_cast<int>(result.color.b),
-            static_cast<int>(result.color.g),
-            static_cast<int>(result.color.r),
-            result.tolerance);
+        LOG_INFO("Auto-detected saturation threshold: S >= {}", s_threshold);
     }
 
     void Application::print_startup_info() const {
@@ -348,7 +352,7 @@ namespace cc::app {
         LOG_INFO("  ESC, Q    - Exit application");
         LOG_INFO("  ENTER     - Cycle display (Processed / Foreground mask)");
         LOG_INFO("  L         - Toggle live video / static image");
-        LOG_INFO("  A         - Auto-detect foreground sensitivity");
+        LOG_INFO("  A         - Auto-calibrate saturation threshold (else auto each frame)");
         LOG_INFO("  G         - Save current frame as screenshot");
         LOG_INFO("  D         - Toggle debug logging");
         LOG_INFO("  [ / ]     - Adjust camera focus");

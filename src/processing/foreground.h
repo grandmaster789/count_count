@@ -16,6 +16,17 @@ namespace cc::processing {
               cc::Image&  foreground_mask
     );
 
+    // Write 255 to foreground_mask where the HSV saturation of each pixel is
+    // >= s_threshold, 0 elsewhere. No blur. foreground_mask must be pre-allocated
+    // (1 channel, same dimensions as source_image). Saturation is illumination
+    // invariant on matte surfaces, so this separates a chromatic object (gear)
+    // from an achromatic (grey/white) background robustly under shadows.
+    void saturation_threshold(
+              int        s_threshold,
+        const cc::Image& source_image,
+              cc::Image& foreground_mask
+    );
+
     // Flip every byte in foreground_mask: 0→255, 255→0.
     void invert_mask(cc::Image& foreground_mask);
 
@@ -41,6 +52,19 @@ namespace cc::processing {
               cc::Image&  blur_temp,
               bool        invert         = false,
               bool        use_chebyshev  = false
+    );
+
+    // Foreground by HSV saturation: mask = 255 where S >= s_threshold, then a
+    // 9×9 majority-vote blur. No inversion — the chromatic object is directly the
+    // foreground. All output buffers must be pre-allocated to source_image's
+    // dimensions. Robust to shadows on a matte background; see
+    // detect_saturation_threshold() (auto_sensitivity.h) for auto calibration.
+    void determine_foreground_by_saturation(
+              int        s_threshold,
+        const cc::Image& source_image,
+              cc::Image& foreground_mask,
+              cc::Image& foreground,
+              cc::Image& blur_temp
     );
 }
 

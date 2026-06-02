@@ -106,6 +106,34 @@ namespace cc::processing {
         }
     }
 
+    void saturation_threshold(
+              int        s_threshold,
+        const cc::Image& source_image,
+              cc::Image& foreground_mask
+    ) {
+        int rows = source_image.rows();
+        int cols = source_image.cols();
+
+        for (int y = 0; y < rows; ++y) {
+            const uint8_t* src_row  = source_image.ptr(y);
+            uint8_t*       mask_row = foreground_mask.ptr(y);
+
+            for (int x = 0; x < cols; ++x) {
+                int idx = x * 3;
+                int b = src_row[idx + 0];
+                int g = src_row[idx + 1];
+                int r = src_row[idx + 2];
+
+                int vi = std::max({b, g, r});
+                int mi = std::min({b, g, r});
+                // HSV saturation, OpenCV convention: S = (V - min) * 255 / V.
+                int s = (vi == 0) ? 0 : ((vi - mi) * 255 + vi / 2) / vi;
+
+                mask_row[x] = (s >= s_threshold) ? 255 : 0;
+            }
+        }
+    }
+
     void invert_mask(cc::Image& foreground_mask) {
         using batch_u8 = xsimd::batch<uint8_t>;
         constexpr auto L = static_cast<ptrdiff_t>(batch_u8::size);
@@ -265,6 +293,44 @@ namespace cc::processing {
 
         if (invert)
             invert_mask(foreground_mask);
+
+        // copy with mask
+        std::memset(foreground.data(), 0, foreground.total_bytes());
+
+        for (int y = 0; y < rows; ++y) {
+            const uint8_t* src_row  = source_image.ptr(y);
+            const uint8_t* mask_row = foreground_mask.ptr(y);
+            uint8_t*       dst_row  = foreground.ptr(y);
+
+            for (int x = 0; x < cols; ++x) {
+                if (mask_row[x]) {
+                    int idx = x * 3;
+                    dst_row[idx + 0] = src_row[idx + 0];
+                    dst_row[idx + 1] = src_row[idx + 1];
+                    dst_row[idx + 2] = src_row[idx + 2];
+                }
+            }
+        }
+    }
+
+    void determine_foreground_by_saturation(
+              int        s_threshold,
+        const cc::Image& source_image,
+              cc::Image& foreground_mask,
+              cc::Image& foreground,
+              cc::Image& blur_temp
+    ) {
+        int rows = source_image.rows();
+        int cols = source_image.cols();
+
+        if (source_image.channels() != 3)
+            return;
+
+        std::memset(foreground_mask.data(), 0, foreground_mask.total_bytes());
+
+        saturation_threshold(s_threshold, source_image, foreground_mask);
+
+        majority_vote_blur(foreground_mask, blur_temp);
 
         // copy with mask
         std::memset(foreground.data(), 0, foreground.total_bytes());
