@@ -8,7 +8,7 @@
 namespace cc::app {
     class SettingsManager {
     public:
-        explicit SettingsManager(const std::filesystem::path& config_file = "count_count.cfg");
+        explicit SettingsManager(std::filesystem::path config_file = "count_count.cfg");
         ~SettingsManager();
 
         SettingsManager            (const SettingsManager&)     = delete;

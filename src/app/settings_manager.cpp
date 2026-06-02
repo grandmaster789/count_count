@@ -1,10 +1,11 @@
 #include "settings_manager.h"
 
 #include <fstream>
+#include <utility>
 
 namespace cc::app {
-    SettingsManager::SettingsManager(const std::filesystem::path& config_file):
-        m_ConfigFile(config_file)
+    SettingsManager::SettingsManager(std::filesystem::path  config_file):
+        m_ConfigFile(std::move(config_file))
     {
         load();
     }

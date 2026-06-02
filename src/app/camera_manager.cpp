@@ -2,8 +2,6 @@
 #include "util/logger.h"
 
 #include <algorithm>
-#include <cmath>
-#include <cstring>
 #include <mfapi.h>
 #include <mfidl.h>
 #include <mfreadwrite.h>
@@ -29,23 +27,34 @@ namespace cc::app {
     }
 
     // Helper: convert a single YUV pixel to BGR and write to output
-    static void yuv_to_bgr_pixel(int y, int u, int v, uint8_t* bgr) {
+    static void yuv_to_bgr_pixel(
+        const int y,
+        const int u,
+        const int v,
+        uint8_t* bgr
+    ) {
         bgr[0] = clamp_byte(y + ((u * 454) >> 8));
         bgr[1] = clamp_byte(y - ((u * 88 + v * 183) >> 8));
         bgr[2] = clamp_byte(y + ((v * 359) >> 8));
     }
 
     // Convert NV12 to BGR, writing into an existing output buffer
-    static void nv12_to_bgr(const uint8_t* data, int width, int height, int stride, cc::Image& out) {
+    static void nv12_to_bgr(
+        const uint8_t* data,
+        const int width,
+        const int height,
+        const int stride,
+        Image& out
+    ) {
         const uint8_t* y_plane  = data;
         const uint8_t* uv_plane = data + stride * height;
 
         for (int row = 0; row < height; ++row) {
             for (int col = 0; col < width; ++col) {
-                int y_val = y_plane[row * stride + col];
-                int uv_idx = (row / 2) * stride + (col & ~1);
-                int u_val = uv_plane[uv_idx + 0] - 128;
-                int v_val = uv_plane[uv_idx + 1] - 128;
+                const int y_val = y_plane[row * stride + col];
+                const int uv_idx = (row / 2) * stride + (col & ~1);
+                const int u_val = uv_plane[uv_idx + 0] - 128;
+                const int v_val = uv_plane[uv_idx + 1] - 128;
 
                 yuv_to_bgr_pixel(y_val, u_val, v_val, out.at(row, col));
             }
@@ -54,18 +63,24 @@ namespace cc::app {
 
     // Convert YUY2 to BGR, writing into an existing output buffer
     // YUY2 encodes pixel pairs; width must be even
-    static void yuy2_to_bgr(const uint8_t* data, int width, int height, int stride, cc::Image& out) {
-        int even_width = width & ~1; // round down to even
+    static void yuy2_to_bgr(
+        const uint8_t* data,
+        const int width,
+        const int height,
+        const int stride,
+        Image& out
+    ) {
+        const int even_width = width & ~1; // round down to even
 
         for (int row = 0; row < height; ++row) {
             const uint8_t* src_row = data + row * stride;
 
             for (int col = 0; col < even_width; col += 2) {
-                int idx = col * 2;
-                int y0 = src_row[idx + 0];
-                int u  = src_row[idx + 1] - 128;
-                int y1 = src_row[idx + 2];
-                int v  = src_row[idx + 3] - 128;
+                const int idx = col * 2;
+                const int y0 = src_row[idx + 0];
+                const int u  = src_row[idx + 1] - 128;
+                const int y1 = src_row[idx + 2];
+                const int v  = src_row[idx + 3] - 128;
 
                 yuv_to_bgr_pixel(y0, u, v, out.at(row, col));
                 yuv_to_bgr_pixel(y1, u, v, out.at(row, col + 1));
@@ -73,33 +88,43 @@ namespace cc::app {
         }
     }
 
-    // Convert MJPG/RGB24 to BGR, writing into an existing output buffer
+    // Convert MJPG/RGB24 to BGR, writing into an existing buffer.
     // Positive stride = bottom-up BGR, negative stride = top-down BGR
-    static void rgb24_to_bgr(const uint8_t* data, int width, int height, int stride, cc::Image& out) {
-        int abs_stride = stride < 0 ? -stride : stride;
-        bool bottom_up = stride > 0;
+    static void rgb24_to_bgr(
+        const uint8_t* data,
+        const int width,
+        const int height,
+        const int stride,
+        Image& out
+    ) {
+        const int abs_stride = stride < 0 ? -stride : stride;
+        const bool bottom_up = stride > 0;
 
         for (int row = 0; row < height; ++row) {
-            int src_row_idx = bottom_up ? (height - 1 - row) : row;
-            const uint8_t* src_row = data + static_cast<size_t>(src_row_idx) * abs_stride;
-            uint8_t*       dst_row = out.ptr(row);
+            const int      src_row_idx = bottom_up ? (height - 1 - row) : row;
+            const uint8_t* src_row     = data + static_cast<size_t>(src_row_idx) * abs_stride;
+            uint8_t*       dst_row     = out.ptr(row);
+
             std::memcpy(dst_row, src_row, static_cast<size_t>(width) * 3);
         }
     }
 
     CameraManager::CameraManager() {
-        HRESULT hr = MFStartup(MF_VERSION);
-        if (FAILED(hr)) {
+        if (const HRESULT hr = MFStartup(MF_VERSION); FAILED(hr)) {
             LOG_ERROR("MFStartup failed: 0x{:08x}", static_cast<unsigned>(hr));
             return;
         }
+
         m_MFInitialized = true;
     }
 
     CameraManager::~CameraManager() {
         m_SourceReader.Reset();
-        if (m_MFInitialized)
-            MFShutdown();
+        if (m_MFInitialized) {
+            if (const HRESULT hr = MFShutdown(); FAILED(hr)) {
+                LOG_ERROR("MFShutdown failed: 0x{:08x}", static_cast<unsigned>(hr));
+            }
+        }
     }
 
     void CameraManager::query_stride() {
@@ -125,7 +150,8 @@ namespace cc::app {
         }
 
         // Fallback: calculate default stride based on format
-        int w = m_Resolution.m_Width;
+        const int w = m_Resolution.m_Width;
+
         if (m_SubType == MFVideoFormat_NV12)       m_Stride = w;
         else if (m_SubType == MFVideoFormat_YUY2)  m_Stride = w * 2;
         else if (m_SubType == MFVideoFormat_RGB24) m_Stride = w * 3;
@@ -159,6 +185,7 @@ namespace cc::app {
         IMFActivate** devices = nullptr;
         UINT32 device_count = 0;
         hr = MFEnumDeviceSources(attr.Get(), &devices, &device_count);
+
         if (FAILED(hr) || device_count == 0) {
             LOG_ERROR("No video capture devices found");
             return false;
@@ -166,8 +193,10 @@ namespace cc::app {
 
         if (static_cast<UINT32>(device_id) >= device_count) {
             LOG_ERROR("Device ID {} out of range (have {} devices)", device_id, device_count);
+
             for (UINT32 i = 0; i < device_count; ++i)
                 devices[i]->Release();
+
             CoTaskMemFree(devices);
             return false;
         }
@@ -200,11 +229,11 @@ namespace cc::app {
 
         // Try to set resolution
         if (m_Resolution.m_Width == 0 || m_Resolution.m_Height == 0) {
-            std::vector<cc::Resolution> resolutions = {
-                { 3840, 2160 },
-                { 1920, 1080 },
-                { 1280, 720  },
-                { 640,  480  }
+            const std::vector<Resolution> resolutions = {
+                { 3840, 2160 }, // 4k
+                { 1920, 1080 }, // 1080p
+                { 1280, 720  }, // 720p
+                { 640,  480  }  // 480p
             };
 
             bool found = false;
@@ -224,12 +253,24 @@ namespace cc::app {
                     k_FirstVideoStream,
                     &current_type
                 );
+
                 if (SUCCEEDED(hr)) {
                     UINT32 w = 0, h = 0;
-                    MFGetAttributeSize(current_type.Get(), MF_MT_FRAME_SIZE, &w, &h);
-                    m_Resolution = { static_cast<int>(w), static_cast<int>(h) };
+                    hr = MFGetAttributeSize(current_type.Get(), MF_MT_FRAME_SIZE, &w, &h);
 
-                    current_type->GetGUID(MF_MT_SUBTYPE, &m_SubType);
+                    if (SUCCEEDED(hr)) {
+                        m_Resolution = {
+                            static_cast<int>(w),
+                            static_cast<int>(h)
+                        };
+
+                        hr = current_type->GetGUID(MF_MT_SUBTYPE, &m_SubType);
+
+                        if (FAILED(hr)) {
+                            LOG_ERROR("Failed to get video format subtype");
+                            return false;
+                        }
+                    }
                 }
             }
         }
@@ -271,6 +312,7 @@ namespace cc::app {
                 focus_to_set,
                 CameraControl_Flags_Manual
             );
+
             if (SUCCEEDED(hr)) {
                 LOG_INFO("Set manual focus to {}", focus_to_set);
             }
@@ -289,18 +331,30 @@ namespace cc::app {
         if (m_CameraControl) {
             long val, flags;
             if (SUCCEEDED(m_CameraControl->Get(CameraControl_Exposure, &val, &flags))) {
-                m_SavedExposure = val; m_SavedExposureFlags = flags; m_HaveSavedExposure = true;
+                m_SavedExposure = val;
+                m_SavedExposureFlags = flags;
+                m_HaveSavedExposure = true;
+
                 m_CameraControl->Set(CameraControl_Exposure, val, CameraControl_Flags_Manual);
             }
         }
+
         if (m_VideoProcAmp) {
             long val, flags;
+
             if (SUCCEEDED(m_VideoProcAmp->Get(VideoProcAmp_WhiteBalance, &val, &flags))) {
-                m_SavedWB = val; m_SavedWBFlags = flags; m_HaveSavedWB = true;
+                m_SavedWB = val;
+                m_SavedWBFlags = flags;
+                m_HaveSavedWB = true;
+
                 m_VideoProcAmp->Set(VideoProcAmp_WhiteBalance, val, VideoProcAmp_Flags_Manual);
             }
+
             if (SUCCEEDED(m_VideoProcAmp->Get(VideoProcAmp_Gain, &val, &flags))) {
-                m_SavedGain = val; m_SavedGainFlags = flags; m_HaveSavedGain = true;
+                m_SavedGain = val;
+                m_SavedGainFlags = flags;
+                m_HaveSavedGain = true;
+
                 m_VideoProcAmp->Set(VideoProcAmp_Gain, val, VideoProcAmp_Flags_Manual);
             }
         }
@@ -314,24 +368,38 @@ namespace cc::app {
             m_VideoProcAmp->Set(VideoProcAmp_WhiteBalance, m_SavedWB, m_SavedWBFlags);
         if (m_VideoProcAmp && m_HaveSavedGain)
             m_VideoProcAmp->Set(VideoProcAmp_Gain, m_SavedGain, m_SavedGainFlags);
+
         m_HaveSavedExposure = m_HaveSavedWB = m_HaveSavedGain = false;
+
         LOG_INFO("autofocus: restored exposure/WB/gain");
     }
 
-    bool CameraManager::grab_stable_frame(cc::Image& output,
-                                          int x0, int y0, int x1, int y1,
-                                          int max_discard, double eps) {
-        cc::Image prev;
-        if (!grab_frame(prev)) return false;
+    bool CameraManager::grab_stable_frame(
+        Image& output,
+        int x0,
+        int y0,
+        int x1,
+        int y1,
+        const int max_discard,
+        const double eps
+    ) {
+        Image prev;
+
+        if (!grab_frame(prev))
+            return false;
 
         // Clamp ROI to the frame.
-        auto clamp_roi = [&](const cc::Image& img) {
+        auto clamp_roi = [&](const Image& img) {
             x0 = std::max(0, std::min(x0, img.cols() - 1));
             x1 = std::max(0, std::min(x1, img.cols() - 1));
             y0 = std::max(0, std::min(y0, img.rows() - 1));
             y1 = std::max(0, std::min(y1, img.rows() - 1));
-            if (x1 < x0) std::swap(x0, x1);
-            if (y1 < y0) std::swap(y0, y1);
+
+            if (x1 < x0)
+                std::swap(x0, x1);
+
+            if (y1 < y0)
+                std::swap(y0, y1);
         };
         clamp_roi(prev);
 
@@ -347,16 +415,19 @@ namespace cc::app {
             for (int y = y0; y <= y1; ++y) {
                 const uint8_t* a = prev.ptr(y);
                 const uint8_t* b = output.ptr(y);
+
                 for (int x = x0; x <= x1; ++x) {
                     int idx = x * 3;
-                    sum += std::abs((int)a[idx + 0] - (int)b[idx + 0])
-                         + std::abs((int)a[idx + 1] - (int)b[idx + 1])
-                         + std::abs((int)a[idx + 2] - (int)b[idx + 2]);
+                    sum += std::abs(static_cast<int>(a[idx + 0]) - static_cast<int>(b[idx + 0]))
+                         + std::abs(static_cast<int>(a[idx + 1]) - static_cast<int>(b[idx + 1]))
+                         + std::abs(static_cast<int>(a[idx + 2]) - static_cast<int>(b[idx + 2]));
                     ++n;
                 }
             }
-            double mean_diff = (n > 0) ? sum / (3.0 * n) : 0.0;
-            if (mean_diff < eps) return true;   // settled
+
+            if (const double mean_diff = (n > 0) ? sum / (3.0 * n) : 0.0; mean_diff < eps)
+                return true;   // settled
+
             prev = output.clone();
         }
         return true;  // hit the discard cap; return the freshest frame anyway
@@ -370,15 +441,21 @@ namespace cc::app {
     }
 
     bool CameraManager::get_focus(long& value) const {
-        if (!m_CameraControl) return false;
-        long flags;
-        HRESULT hr = m_CameraControl->Get(CameraControl_Focus, &value, &flags);
+        if (!m_CameraControl)
+            return false;
+
+        long flags = 0;
+        const HRESULT hr = m_CameraControl->Get(CameraControl_Focus, &value, &flags);
+
         return SUCCEEDED(hr);
     }
 
-    bool CameraManager::set_focus(long value) {
-        if (!m_CameraControl) return false;
-        HRESULT hr = m_CameraControl->Set(CameraControl_Focus, value, CameraControl_Flags_Manual);
+    bool CameraManager::set_focus(long value) const {
+        if (!m_CameraControl)
+            return false;
+
+        const HRESULT hr = m_CameraControl->Set(CameraControl_Focus, value, CameraControl_Flags_Manual);
+
         return SUCCEEDED(hr);
     }
 

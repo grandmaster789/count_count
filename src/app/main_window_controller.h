@@ -30,9 +30,9 @@ namespace cc::app {
         MainWindowController& operator = (MainWindowController&&) noexcept = delete;
 
         void show(const cc::Image& image);
-        void set_sensitivity(int value);
-        void set_trackbar_position(int value);
-        void select_color(int x, int y);
+        void set_sensitivity(int value) const;
+        void set_trackbar_position(int value) const;
+        void select_color(int x, int y) const;
 
         int  wait_key(int delay_ms = 30);
         bool is_open() const;

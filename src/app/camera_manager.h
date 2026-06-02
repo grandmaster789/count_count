@@ -27,7 +27,7 @@ namespace cc::app {
 
         bool get_focus_range(long& min, long& max, long& step) const;
         bool get_focus(long& value) const;
-        bool set_focus(long value);
+        bool set_focus(long value) const;
 
         // Lock exposure / white-balance / gain to manual for the duration of a focus
         // sweep so the sharpness metric isn't confounded by auto-exposure drift, then

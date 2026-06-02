@@ -2,12 +2,17 @@
 
 #include <cmath>
 #include <algorithm>
-#include <array>
-#include <cstring>
 
 namespace cc::drawing {
 
-    void set_pixel(cc::Image& img, int x, int y, uint8_t b, uint8_t g, uint8_t r) {
+    void set_pixel(
+        Image& img,
+        const int x,
+        const int y,
+        const uint8_t b,
+        const uint8_t g,
+        const uint8_t r
+    ) {
         if (x < 0 || x >= img.cols() || y < 0 || y >= img.rows())
             return;
 
@@ -23,27 +28,39 @@ namespace cc::drawing {
     }
 
     // Set a thick pixel (filled square of given thickness centered on x,y)
-    static void set_thick_pixel(cc::Image& img, int x, int y, uint8_t b, uint8_t g, uint8_t r, int thickness) {
-        int half = thickness / 2;
+    static void set_thick_pixel(
+        Image& img,
+        const int x,
+        const int y,
+        const uint8_t b,
+        const uint8_t g,
+        const uint8_t r,
+        const int thickness
+    ) {
+        const int half = thickness / 2;
+
         for (int dy = -half; dy <= half; ++dy)
             for (int dx = -half; dx <= half; ++dx)
                 set_pixel(img, x + dx, y + dy, b, g, r);
     }
 
     void draw_line(
-        cc::Image&         img,
-        const cc::Point2i& p1,
-        const cc::Point2i& p2,
-        uint8_t b, uint8_t g, uint8_t r,
-        int thickness
+        Image&         img,
+        const Point2i& p1,
+        const Point2i& p2,
+        const uint8_t b,
+        const uint8_t g,
+        const uint8_t r,
+        const int thickness
     ) {
         int x0 = p1.x, y0 = p1.y;
-        int x1 = p2.x, y1 = p2.y;
+        const int x1 = p2.x;
+        const int y1 = p2.y;
 
-        int dx = std::abs(x1 - x0);
-        int dy = -std::abs(y1 - y0);
-        int sx = x0 < x1 ? 1 : -1;
-        int sy = y0 < y1 ? 1 : -1;
+        const int dx = std::abs(x1 - x0);
+        const int dy = -std::abs(y1 - y0);
+        const int sx = x0 < x1 ? 1 : -1;
+        const int sy = y0 < y1 ? 1 : -1;
         int err = dx + dy;
 
         while (true) {
@@ -52,35 +69,47 @@ namespace cc::drawing {
             else
                 set_thick_pixel(img, x0, y0, b, g, r, thickness);
 
-            if (x0 == x1 && y0 == y1) break;
-            int e2 = 2 * err;
-            if (e2 >= dy) { err += dy; x0 += sx; }
-            if (e2 <= dx) { err += dx; y0 += sy; }
+            if (x0 == x1 && y0 == y1)
+                break;
+
+            const int e2 = 2 * err;
+
+            if (e2 >= dy) {
+                err += dy;
+                x0 += sx;
+            }
+
+            if (e2 <= dx) {
+                err += dx;
+                y0 += sy;
+            }
         }
     }
 
     void draw_arrowed_line(
-        cc::Image&         img,
-        const cc::Point2i& from,
-        const cc::Point2i& to,
-        uint8_t b, uint8_t g, uint8_t r,
-        int thickness
+        Image&         img,
+        const Point2i& from,
+        const Point2i& to,
+        const uint8_t b,
+        const uint8_t g,
+        const uint8_t r,
+        const int thickness
     ) {
         draw_line(img, from, to, b, g, r, thickness);
 
         // Draw arrowhead
-        double angle = std::atan2(
+        const double angle = std::atan2(
             static_cast<double>(to.y - from.y),
             static_cast<double>(to.x - from.x)
         );
-        double arrow_len = 10.0 * thickness;
-        double arrow_angle = 0.5; // radians (~28 degrees)
+        const double arrow_len = 10.0 * thickness;
+        constexpr double arrow_angle = 0.5; // radians (~28 degrees)
 
-        cc::Point2i tip1(
+        Point2i tip1(
             static_cast<int>(to.x - arrow_len * std::cos(angle - arrow_angle)),
             static_cast<int>(to.y - arrow_len * std::sin(angle - arrow_angle))
         );
-        cc::Point2i tip2(
+        Point2i tip2(
             static_cast<int>(to.x - arrow_len * std::cos(angle + arrow_angle)),
             static_cast<int>(to.y - arrow_len * std::sin(angle + arrow_angle))
         );
@@ -90,11 +119,13 @@ namespace cc::drawing {
     }
 
     void draw_circle(
-        cc::Image&         img,
-        const cc::Point2i& center,
-        int                radius,
-        uint8_t b, uint8_t g, uint8_t r,
-        bool filled
+        Image&         img,
+        const Point2i& center,
+        const int      radius,
+        const uint8_t  b,
+        const uint8_t  g,
+        const uint8_t  r,
+        const bool     filled
     ) {
         if (filled) {
             for (int y = -radius; y <= radius; ++y) {
@@ -133,13 +164,16 @@ namespace cc::drawing {
     }
 
     void draw_polyline(
-        cc::Image&                          img,
-        const std::vector<cc::Point2i>&     points,
-        uint8_t b, uint8_t g, uint8_t r,
-        bool closed,
-        int  thickness
+        Image&                          img,
+        const std::vector<Point2i>&     points,
+        const uint8_t b,
+        const uint8_t g,
+        const uint8_t r,
+        const bool closed,
+        const int  thickness
     ) {
-        if (points.size() < 2) return;
+        if (points.size() < 2)
+            return;
 
         for (size_t i = 0; i + 1 < points.size(); ++i)
             draw_line(img, points[i], points[i + 1], b, g, r, thickness);
@@ -158,39 +192,157 @@ namespace cc::drawing {
     // clang-format off
     static constexpr uint8_t k_Font[][k_GlyphH] = {
         // '0'
-        { 0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110 },
+        {   0b01110,
+            0b10001,
+            0b10011,
+            0b10101,
+            0b11001,
+            0b10001,
+            0b01110 },
+
         // '1'
-        { 0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110 },
+        {   0b00100,
+            0b01100,
+            0b00100,
+            0b00100,
+            0b00100,
+            0b00100,
+            0b01110 },
+
         // '2'
-        { 0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111 },
+        {   0b01110,
+            0b10001,
+            0b00001,
+            0b00010,
+            0b00100,
+            0b01000,
+            0b11111 },
+
         // '3'
-        { 0b11111, 0b00010, 0b00100, 0b00010, 0b00001, 0b10001, 0b01110 },
+        {   0b11111,
+            0b00010,
+            0b00100,
+            0b00010,
+            0b00001,
+            0b10001,
+            0b01110 },
+
         // '4'
-        { 0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010 },
+        {   0b00010,
+            0b00110,
+            0b01010,
+            0b10010,
+            0b11111,
+            0b00010,
+            0b00010 },
+
         // '5'
-        { 0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110 },
+        {   0b11111,
+            0b10000,
+            0b11110,
+            0b00001,
+            0b00001,
+            0b10001,
+            0b01110 },
+
         // '6'
-        { 0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110 },
+        {   0b00110,
+            0b01000,
+            0b10000,
+            0b11110,
+            0b10001,
+            0b10001,
+            0b01110 },
+
         // '7'
-        { 0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000 },
+        {   0b11111,
+            0b00001,
+            0b00010,
+            0b00100,
+            0b01000,
+            0b01000,
+            0b01000 },
+
         // '8'
-        { 0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110 },
+        {   0b01110,
+            0b10001,
+            0b10001,
+            0b01110,
+            0b10001,
+            0b10001,
+            0b01110 },
+
         // '9'
-        { 0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100 },
+        {   0b01110,
+            0b10001,
+            0b10001,
+            0b01111,
+            0b00001,
+            0b00010,
+            0b01100 },
+
         // '/'
-        { 0b00001, 0b00010, 0b00010, 0b00100, 0b01000, 0b01000, 0b10000 },
+        {   0b00001,
+            0b00010,
+            0b00010,
+            0b00100,
+            0b01000,
+            0b01000,
+            0b10000 },
+
         // '?'
-        { 0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b00000, 0b00100 },
+        {   0b01110,
+            0b10001,
+            0b00001,
+            0b00010,
+            0b00100,
+            0b00000,
+            0b00100 },
+
         // '!'
-        { 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00000, 0b00100 },
+        {   0b00100,
+            0b00100,
+            0b00100,
+            0b00100,
+            0b00100,
+            0b00000,
+            0b00100 },
+
         // ' '
-        { 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000 },
+        {   0b00000,
+            0b00000,
+            0b00000,
+            0b00000,
+            0b00000,
+            0b00000,
+            0b00000 },
+
         // '('
-        { 0b00010, 0b00100, 0b01000, 0b01000, 0b01000, 0b00100, 0b00010 },
+        {   0b00010,
+            0b00100,
+            0b01000,
+            0b01000,
+            0b01000,
+            0b00100,
+            0b00010 },
+
         // ')'
-        { 0b01000, 0b00100, 0b00010, 0b00010, 0b00010, 0b00100, 0b01000 },
+        {   0b01000,
+            0b00100,
+            0b00010,
+            0b00010,
+            0b00010,
+            0b00100,
+            0b01000 },
+
         // '%'
-        { 0b11000, 0b11001, 0b00010, 0b00100, 0b01000, 0b10011, 0b00011 },
+        {   0b11000,
+            0b11001,
+            0b00010,
+            0b00100,
+            0b01000,
+            0b10011,
+            0b00011 },
     };
     // clang-format on
 
@@ -206,8 +358,9 @@ namespace cc::drawing {
     }
 
     TextSize measure_text(const std::string& text, double scale) {
-        int s = std::max(1, static_cast<int>(scale));
-        int char_w = (k_GlyphW + 1) * s; // +1 for inter-character spacing
+        const int s = std::max(1, static_cast<int>(scale));
+        const int char_w = (k_GlyphW + 1) * s; // +1 for inter-character spacing
+
         return {
             static_cast<int>(text.size()) * char_w,
             k_GlyphH * s
@@ -215,12 +368,13 @@ namespace cc::drawing {
     }
 
     void draw_text(
-        cc::Image&         img,
+        Image&         img,
         const std::string& text,
-        const cc::Point2i& position,
-        uint8_t b, uint8_t g, uint8_t r,
-        double scale,
-        int    /*thickness*/
+        const Point2i& position,
+        const uint8_t b,
+        const uint8_t g,
+        const uint8_t r,
+        const double scale
     ) {
         int s = std::max(1, static_cast<int>(scale));
         int char_w = (k_GlyphW + 1) * s;

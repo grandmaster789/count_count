@@ -3,8 +3,6 @@
 
 #include "util/logger.h"
 
-#include <cstring>
-
 #include <commctrl.h>
 #include <windowsx.h> // GET_X_LPARAM, GET_Y_LPARAM
 #pragma comment(lib, "comctl32.lib")
@@ -168,16 +166,16 @@ namespace cc::app {
             ReleaseDC(m_Hwnd, hdc);
     }
 
-    void MainWindowController::set_sensitivity(int value) {
+    void MainWindowController::set_sensitivity(int value) const {
         m_SettingsManager->get().m_ForegroundColorTolerance = value;
     }
 
-    void MainWindowController::set_trackbar_position(int value) {
+    void MainWindowController::set_trackbar_position(int value) const {
         if (m_Trackbar)
             SendMessageA(m_Trackbar, TBM_SETPOS, TRUE, value);
     }
 
-    void MainWindowController::select_color(int x, int y) {
+    void MainWindowController::select_color(int x, int y) const {
         if (m_LastImage.empty())
             return;
 

@@ -19,7 +19,6 @@
 
 #include "util/logger.h"
 
-#include <cstring>
 #include <map>
 
 namespace {
@@ -27,8 +26,8 @@ namespace {
         std::map<int, int> freq;
         for (int v : values) if (v > 0) ++freq[v];
         if (freq.empty()) return -1;
-        return std::max_element(freq.begin(), freq.end(),
-            [](const auto& a, const auto& b) { return a.second < b.second; })->first;
+        return std::ranges::max_element(freq,
+                                        [](const auto& a, const auto& b) { return a.second < b.second; })->first;
     }
 
     void save_image(const cc::Image& img, const std::filesystem::path& data_path) {
@@ -39,12 +38,12 @@ namespace {
             return;
         }
 
-        auto timestamped_filename = std::format(
+        const auto timestamped_filename = std::format(
             "screengrab_{0:%F}_{0:%OH%OM%OS}.jpg",
             std::chrono::system_clock::now()
         );
 
-        auto full_path = data_path / timestamped_filename;
+        const auto full_path = data_path / timestamped_filename;
         save_jpg(img, full_path);
 
         LOG_INFO("Saved image to {}", full_path.string());
@@ -86,12 +85,12 @@ namespace cc::app {
     }
 
     void Application::main_loop() {
-        cc::Image static_image;
+        Image static_image;
 
         if (!m_UseLiveVideo) {
-            auto path = m_DataPath / "test_real_gear_002.jpg";
+            auto path = m_DataPath / "test_real_gear_004.jpg";
             try {
-                static_image = cc::io::load_jpg(path);
+                static_image = io::load_jpg(path);
             } catch (const std::exception& e) {
                 LOG_ERROR("Failed to load static image '{}': {}", path.string(), e.what());
                 LOG_INFO("Falling back to live video");
@@ -150,15 +149,15 @@ namespace cc::app {
                 std::memcpy(m_OutputImage.data(), m_SourceImage.data(), m_SourceImage.total_bytes());
 
                 // ----- video processing -----
-                // Saturation segmentation: the chromatic gear is high-saturation, the
-                // achromatic grey/white background is low-saturation. Matte-surface
+                // Saturation segmentation: the chromatic gear is high saturation, the
+                // achromatic gray/white background is low-saturation. Matte-surface
                 // shadows move value (V), not saturation (S), so this is shadow-robust
                 // where BGR Chebyshev distance leaked shadows into the mask.
                 //
                 // The trackbar value (m_ForegroundColorTolerance, 0..255) doubles as a
                 // manual S threshold; values below k_AutoSaturationBelow mean
                 // "auto-calibrate from this frame" — the robust default that works
-                // whether or not the user has pressed 'A' or tuned the slider.
+                // whether the user has pressed 'A' or tuned the slider.
                 int s_threshold = settings.m_ForegroundColorTolerance;
                 if (s_threshold < k_AutoSaturationBelow)
                     s_threshold = processing::detect_saturation_threshold(m_SourceImage);
@@ -205,9 +204,11 @@ namespace cc::app {
 
                             // Temporal mode filter: accumulate recent counts and display
                             // the most frequent value to suppress single-frame noise.
-                            auto push = [](std::deque<int>& q, int v, size_t max_size) {
+                            auto push = [](std::deque<int>& q, const int v, size_t max_size) {
                                 q.push_back(v);
-                                if (q.size() > max_size) q.pop_front();
+
+                                if (q.size() > max_size)
+                                    q.pop_front();
                             };
                             push(m_RecentDirectCounts, static_cast<int>(result.m_Teeth.size()), k_TemporalWindow);
                             push(m_RecentSpecCounts,   result.m_SpeculativeCount,                k_TemporalWindow);
@@ -218,7 +219,7 @@ namespace cc::app {
                             // Analysis-by-synthesis: fit an ideal gear of the displayed
                             // count to the rim, draw the fitted template, and surface a
                             // goodness-of-fit confidence (flags non-gears / bad frames).
-                            int fit_count = smoothed_spec > 0 ? smoothed_spec : smoothed_direct;
+                            const int fit_count = smoothed_spec > 0 ? smoothed_spec : smoothed_direct;
                             auto fit = processing::fit_gear_template(
                                 m_ForegroundMask, result.m_Centroid, fit_count);
                             if (fit.valid && fit.outline.size() > 1)
@@ -258,9 +259,8 @@ namespace cc::app {
             }
 
             // ----- key input handling -----
-            int key = m_UiController->wait_key();
 
-            switch (key) {
+            switch (int key = m_UiController->wait_key()) {
                 case 27: // escape key
                 case 'q':
                 case 'Q':
@@ -293,12 +293,12 @@ namespace cc::app {
 
                 case 'd':
                 case 'D': {
-                    auto& logger = cc::util::Logger::instance();
-                    if (logger.get_level() == cc::util::LogLevel::DEBUG) {
-                        logger.set_level(cc::util::LogLevel::INFO);
+                    auto& logger = util::Logger::instance();
+                    if (logger.get_level() == util::LogLevel::DEBUG) {
+                        logger.set_level(util::LogLevel::INFO);
                         LOG_INFO("Log level: INFO");
                     } else {
-                        logger.set_level(cc::util::LogLevel::DEBUG);
+                        logger.set_level(util::LogLevel::DEBUG);
                         LOG_DEBUG("Log level: DEBUG");
                     }
                     break;
@@ -318,8 +318,10 @@ namespace cc::app {
                 case VK_OEM_4:
                 case VK_OEM_6: {
                     long min_f, max_f, step_f;
+
                     if (m_CameraManager->get_focus_range(min_f, max_f, step_f)) {
                         long current_f;
+
                         if (m_CameraManager->get_focus(current_f)) {
                             long next_f = current_f + (key == VK_OEM_4 ? step_f : -step_f);
                             next_f = std::clamp(next_f, min_f, max_f);
@@ -348,7 +350,7 @@ namespace cc::app {
         }
     }
 
-    void Application::auto_detect_sensitivity() {
+    void Application::auto_detect_sensitivity() const {
         if (m_SourceImage.empty())
             return;
 
@@ -364,7 +366,7 @@ namespace cc::app {
         LOG_INFO("Auto-detected saturation threshold: S >= {}", s_threshold);
     }
 
-    void Application::autofocus() {
+    void Application::autofocus() const {
         if (!m_UseLiveVideo || !m_CameraManager->is_initialized()) {
             LOG_INFO("Autofocus skipped (needs a live camera)");
             return;
@@ -382,7 +384,7 @@ namespace cc::app {
         // and locking a mid-convergence value would bias the whole sweep.
         LOG_INFO("Autofocus: warming up (letting exposure settle)...");
         {
-            cc::Image warm;
+            Image warm;
             for (int i = 0; i < 15; ++i)
                 if (!m_CameraManager->grab_frame(warm)) break;
         }
@@ -395,13 +397,17 @@ namespace cc::app {
         // focus to focus over a constant region, not a shifting one).
         processing::FocusRoi roi;
         {
-            cc::Image frame;
+            Image frame;
+
             if (m_CameraManager->grab_frame(frame)) {
-                cc::Image mask(frame.rows(), frame.cols(), 1);
-                cc::Image fg(frame.rows(), frame.cols(), 3);
-                cc::Image blur(frame.rows(), frame.cols(), 1);
+                Image mask(frame.rows(), frame.cols(), 1);
+                Image fg(frame.rows(), frame.cols(), 3);
+                Image blur(frame.rows(), frame.cols(), 1);
+
                 int s = processing::detect_saturation_threshold(frame);
+
                 processing::determine_foreground_by_saturation(s, frame, mask, fg, blur);
+
                 roi = processing::roi_from_mask(mask);
             }
         }
@@ -409,12 +415,14 @@ namespace cc::app {
                  "(window may be unresponsive for a few seconds)...",
                  roi.x0, roi.y0, roi.x1, roi.y1, min_f, max_f, step_f);
 
-        cc::Image probe;
+        Image probe;
         auto evaluate = [&](long f) -> double {
             m_CameraManager->set_focus(f);
             m_CameraManager->grab_stable_frame(probe, roi.x0, roi.y0, roi.x1, roi.y1);
+
             double score = processing::focus_measure(probe, roi);
             LOG_DEBUG("autofocus: focus={} score={:.1f}", f, score);
+
             return score;
         };
 
@@ -440,7 +448,7 @@ namespace cc::app {
         print_keyboard_controls();
     }
 
-    void Application::print_keyboard_controls() const {
+    void Application::print_keyboard_controls() {
         LOG_INFO("Keyboard controls:");
         LOG_INFO("  ESC, Q    - Exit application");
         LOG_INFO("  ENTER     - Cycle display (Processed / Foreground mask)");

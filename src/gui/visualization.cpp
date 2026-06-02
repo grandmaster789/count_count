@@ -56,10 +56,11 @@ namespace cc {
         double                               fit_score
     ) {
         // Scale font relative to image height so text is readable at any resolution
-        double k_FontScale     = std::max(2.0, output_image.rows() / 100.0);
-        int    k_FontThickness = std::max(2, static_cast<int>(k_FontScale));
+        double k_FontScale = std::max(1.1, output_image.rows() / 100.0);
 
-        constexpr uint8_t k_BgB   = 0,   k_BgG   = 0,   k_BgR   = 0;  // black
+        constexpr uint8_t k_BgB = 0;
+        constexpr uint8_t k_BgG = 0;
+        constexpr uint8_t k_BgR = 0;  // black
 
         // draw the center
         drawing::draw_circle(
@@ -149,6 +150,7 @@ namespace cc {
         // numbers: "27 (26) 97%" = FFT count 27, direct count 26, 97% fit.
         if (fft_valid) {
             message = std::format("{}", speculative_count);
+
             if (has_anomaly)
                 message += std::format(" ({}/{})", teeth.size(), expected_count);
             else if (speculative_count != direct)
@@ -189,8 +191,7 @@ namespace cc {
             message,
             Point2i(text_pos.x + shadow_offset, text_pos.y + shadow_offset),
             40, 40, 40,
-            k_FontScale,
-            k_FontThickness
+            k_FontScale
         );
 
         uint8_t tb, tg, tr;
@@ -221,8 +222,7 @@ namespace cc {
             message,
             text_pos,
             tb, tg, tr,
-            k_FontScale,
-            k_FontThickness
+            k_FontScale
         );
     }
 }
