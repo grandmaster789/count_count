@@ -299,13 +299,16 @@ namespace cc::app {
                     }
                     break;
 
-                case '[':
-                case ']': {
+                // non-ascii characters should use the virtualkey macros
+                // VK_OEM_4 '[{' for US
+                // VK_OEM_6 ']}' for US
+                case VK_OEM_4:
+                case VK_OEM_6: {
                     long min_f, max_f, step_f;
                     if (m_CameraManager->get_focus_range(min_f, max_f, step_f)) {
                         long current_f;
                         if (m_CameraManager->get_focus(current_f)) {
-                            long next_f = current_f + (key == ']' ? step_f : -step_f);
+                            long next_f = current_f + (key == VK_OEM_4 ? step_f : -step_f);
                             next_f = std::clamp(next_f, min_f, max_f);
 
                             if (m_CameraManager->set_focus(next_f)) {
