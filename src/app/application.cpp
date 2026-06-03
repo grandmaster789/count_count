@@ -106,6 +106,7 @@ namespace cc::app {
         while (m_Running) {
             try {
                 auto settings = m_SettingsManager->get(); // fetch settings once per frame
+                ++m_FramesSinceRecalib;                   // self-heal cooldown tick
 
                 // ----- video input -----
                 if (m_UseLiveVideo) {
@@ -127,11 +128,18 @@ namespace cc::app {
                         break;
                     }
 
-                    // Run the custom autofocus once, after the camera is up and
-                    // delivering frames (the built-in autofocus won't converge).
-                    if (!m_AutofocusDone) {
+                    // Auto-tune once, after the camera is up and delivering frames.
+                    // NOTE: exposure/white-balance are deliberately NOT auto-locked at
+                    // startup — a bad converge-then-lock (e.g. a blue-tinted WB) raises
+                    // the wall's saturation until it overlaps the gear's and breaks
+                    // segmentation. The camera's native AE/AWB is left running; 'E'/'W'
+                    // remain available to lock manually. We do run autofocus (the
+                    // hardware AF won't converge) and the count-guided saturation
+                    // calibration.
+                    if (!m_StartupTuneDone) {
                         autofocus();
-                        m_AutofocusDone = true;
+                        auto_detect_sensitivity();
+                        m_StartupTuneDone = true;
                     }
                 }
                 else if (!static_image_loaded) {
@@ -150,7 +158,7 @@ namespace cc::app {
 
                 // ----- video processing -----
                 // Saturation segmentation: the chromatic gear is high saturation, the
-                // achromatic gray/white background is low-saturation. Matte-surface
+                // achromatic gray/white background is low saturation. Matte-surface
                 // shadows move value (V), not saturation (S), so this is shadow-robust
                 // where BGR Chebyshev distance leaked shadows into the mask.
                 //
@@ -197,6 +205,24 @@ namespace cc::app {
 
                         LOG_DEBUG("contour result: {} teeth direct, {} speculative",
                                   result.m_Teeth.size(), result.m_SpeculativeCount);
+
+                        // Self-heal: a broken saturation threshold breaks the rim, so the
+                        // FFT latches onto a low-frequency shape artifact (fft << direct).
+                        // If that persists, auto-recalibrate the threshold (count-guided),
+                        // throttled by a cooldown so a hard scene can't recalibrate every
+                        // frame. The new threshold takes effect next frame.
+                        const int direct_n = static_cast<int>(result.m_Teeth.size());
+                        const bool broken = result.m_SpeculativeCount > 0 &&
+                                            result.m_SpeculativeCount * 10 < direct_n * 7;
+                        m_BrokenStreak = broken ? m_BrokenStreak + 1 : 0;
+                        if (m_BrokenStreak >= k_BrokenStreakTrigger &&
+                            m_FramesSinceRecalib >= k_SelfHealCooldown) {
+                            LOG_INFO("self-heal: count looks broken (fft={} << direct={}), recalibrating saturation threshold",
+                                     result.m_SpeculativeCount, direct_n);
+                            auto_detect_sensitivity();
+                            m_BrokenStreak       = 0;
+                            m_FramesSinceRecalib = 0;
+                        }
 
                         // early exit -- if we have found less than 8 teeth, it's probably not a gear that we found
                         if (result.m_Teeth.size() >= k_MinimumToothCount) {
@@ -277,6 +303,16 @@ namespace cc::app {
                     autofocus();
                     break;
 
+                case 'e':
+                case 'E':
+                    auto_exposure();
+                    break;
+
+                case 'w':
+                case 'W':
+                    auto_white_balance();
+                    break;
+
                 case 'a':
                 case 'A':
                     auto_detect_sensitivity();
@@ -354,16 +390,17 @@ namespace cc::app {
         if (m_SourceImage.empty())
             return;
 
-        // Calibrate the saturation threshold from the current frame and freeze it
-        // into the trackbar/settings so the segmentation uses a fixed value until
-        // the user changes it. (Without pressing 'A', main_loop auto-calibrates
-        // every frame.)
-        int s_threshold = processing::detect_saturation_threshold(m_SourceImage);
+        // Count-guided calibration: sweep saturation thresholds, segment + count at
+        // each, and pick the one whose gear contour gives the strongest stable tooth
+        // count. Robust to worn gears / saturated walls where the cheap histogram
+        // threshold breaks the rim. Frozen into trackbar/settings so per-frame
+        // segmentation reuses it (no per-frame search).
+        int s_threshold = processing::detect_saturation_threshold_by_teeth(m_SourceImage);
 
         m_SettingsManager->get().m_ForegroundColorTolerance = s_threshold;
         m_UiController->set_trackbar_position(s_threshold);
 
-        LOG_INFO("Auto-detected saturation threshold: S >= {}", s_threshold);
+        LOG_INFO("Auto-detected saturation threshold (count-guided): S >= {}", s_threshold);
     }
 
     void Application::autofocus() const {
@@ -436,6 +473,46 @@ namespace cc::app {
         LOG_INFO("Autofocus: converged on focus = {}", best);
     }
 
+    void Application::auto_exposure() const {
+        if (!m_UseLiveVideo || !m_CameraManager->is_initialized()) {
+            LOG_INFO("Auto-exposure skipped (needs a live camera)");
+            return;
+        }
+
+        // Converge-then-lock: let the camera's own auto-exposure settle, then pin the
+        // converged value to manual so it stays deterministic (and the focus sweep
+        // and saturation segmentation see a stable exposure).
+        LOG_INFO("Auto-exposure: letting the camera converge, then locking...");
+        long value = 0;
+        if (m_CameraManager->autotune_exposure(value)) {
+            m_SettingsManager->get().m_ExposureValue = static_cast<int>(value);
+            m_SettingsManager->save();
+            LOG_INFO("Auto-exposure: locked exposure = {}", value);
+        } else {
+            LOG_WARNING("Auto-exposure: failed (control unavailable)");
+        }
+    }
+
+    void Application::auto_white_balance() const {
+        if (!m_UseLiveVideo || !m_CameraManager->is_initialized()) {
+            LOG_INFO("Auto-white-balance skipped (needs a live camera)");
+            return;
+        }
+
+        // Converge-then-lock the camera's own white balance: a neutral, unclipped
+        // background keeps the wall low-saturation, which is what the saturation
+        // segmentation relies on to separate the chromatic gear.
+        LOG_INFO("Auto-white-balance: letting the camera converge, then locking...");
+        long value = 0;
+        if (m_CameraManager->autotune_white_balance(value)) {
+            m_SettingsManager->get().m_WhiteBalanceValue = static_cast<int>(value);
+            m_SettingsManager->save();
+            LOG_INFO("Auto-white-balance: locked white-balance = {}", value);
+        } else {
+            LOG_WARNING("Auto-white-balance: failed (control unavailable)");
+        }
+    }
+
     void Application::print_startup_info() const {
         LOG_INFO("Starting Counting...");
         LOG_INFO("Running on: {}",          ePlatform::current);
@@ -455,6 +532,8 @@ namespace cc::app {
         LOG_INFO("  L         - Toggle live video / static image");
         LOG_INFO("  A         - Auto-calibrate saturation threshold (else auto each frame)");
         LOG_INFO("  F         - Autofocus (contrast-detection focus sweep on the gear)");
+        LOG_INFO("  E         - Auto-exposure (converge the camera's AE, then lock it)");
+        LOG_INFO("  W         - Auto white-balance (converge the camera's AWB, then lock it)");
         LOG_INFO("  G         - Save current frame as screenshot");
         LOG_INFO("  D         - Toggle debug logging");
         LOG_INFO("  [ / ]     - Adjust camera focus");

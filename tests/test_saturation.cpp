@@ -207,3 +207,39 @@ TEST_CASE("real gears - saturation pipeline recovers known tooth counts", "[satu
     REQUIRE(c003 >= 80);
     REQUIRE(c003 <= 86);
 }
+
+namespace {
+    // FFT count at a specific saturation threshold.
+    int count_at(const std::filesystem::path& jpg, int t) {
+        cc::Image img = cc::io::load_jpg(jpg);
+        cc::Image mask(img.rows(), img.cols(), 1), fg(img.rows(), img.cols(), 3), blur(img.rows(), img.cols(), 1);
+        determine_foreground_by_saturation(t, img, mask, fg, blur);
+        auto contours = find_contours(mask);
+        if (contours.empty()) return -1;
+        auto r = process_contours(contours, img);
+        return r ? r->m_SpeculativeCount : -1;
+    }
+}
+
+TEST_CASE("real gears - count-guided threshold recovers a hard worn gear", "[saturation][realimage]") {
+    std::filesystem::path data = locate_data();
+    if (data.empty() || !std::filesystem::exists(data / "test_real_gear_005.jpg"))
+        SKIP("reference gear images not found next to the test binary");
+
+    // 005: worn 72-tooth gear on a more-saturated wall. The cheap histogram
+    // threshold overshoots and breaks the rim (FFT collapses to ~4-6); the
+    // count-guided search must find a threshold that recovers ~72.
+    int t5 = detect_saturation_threshold_by_teeth(cc::io::load_jpg(data / "test_real_gear_005.jpg"));
+    int c5 = count_at(data / "test_real_gear_005.jpg", t5);
+    REQUIRE(c5 >= 66);
+    REQUIRE(c5 <= 76);
+
+    // Must not regress the clean gears.
+    int t4 = detect_saturation_threshold_by_teeth(cc::io::load_jpg(data / "test_real_gear_004.jpg"));
+    REQUIRE(count_at(data / "test_real_gear_004.jpg", t4) == 27);
+
+    int t3 = detect_saturation_threshold_by_teeth(cc::io::load_jpg(data / "test_real_gear_003.jpg"));
+    int c3 = count_at(data / "test_real_gear_003.jpg", t3);
+    REQUIRE(c3 >= 80);
+    REQUIRE(c3 <= 86);
+}

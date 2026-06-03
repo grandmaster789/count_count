@@ -433,6 +433,108 @@ namespace cc::app {
         return true;  // hit the discard cap; return the freshest frame anyway
     }
 
+    void CameraManager::discard_frames(int n) {
+        Image tmp;
+        for (int i = 0; i < n; ++i)
+            if (!grab_frame(tmp)) return;
+    }
+
+    bool CameraManager::autotune_exposure(long& locked_value, int settle_max) {
+        if (!m_CameraControl) {
+            LOG_WARNING("autotune exposure: camera control unavailable");
+            return false;
+        }
+
+        long cur, flags;
+        if (FAILED(m_CameraControl->Get(CameraControl_Exposure, &cur, &flags))) {
+            LOG_WARNING("autotune exposure: cannot read exposure");
+            return false;
+        }
+
+        // Engage the camera's own auto-exposure. If Auto is unsupported, just lock the
+        // current value (still deterministic).
+        if (FAILED(m_CameraControl->Set(CameraControl_Exposure, cur, CameraControl_Flags_Auto))) {
+            LOG_WARNING("autotune exposure: Auto mode unavailable; locking current value {}", cur);
+            m_CameraControl->Set(CameraControl_Exposure, cur, CameraControl_Flags_Manual);
+            locked_value = cur;
+            return true;
+        }
+        // The AE algorithm trades off exposure time AND gain, so let gain auto-adjust
+        // during convergence too — otherwise we lock exposure but gain keeps drifting
+        // brightness frame-to-frame ("exposure locked" must mean "brightness locked").
+        long gain_cur = 0, gain_flags = 0;
+        bool have_gain = m_VideoProcAmp &&
+                         SUCCEEDED(m_VideoProcAmp->Get(VideoProcAmp_Gain, &gain_cur, &gain_flags));
+        if (have_gain)
+            m_VideoProcAmp->Set(VideoProcAmp_Gain, gain_cur, VideoProcAmp_Flags_Auto);
+
+        // Let auto-exposure engage, then wait for the frame to stop changing.
+        discard_frames(5);
+        Image tmp;
+        grab_stable_frame(tmp, 0, 0, m_Resolution.m_Width - 1, m_Resolution.m_Height - 1,
+                          settle_max, 2.5);
+
+        long val, f2;
+        if (FAILED(m_CameraControl->Get(CameraControl_Exposure, &val, &f2))) {
+            LOG_WARNING("autotune exposure: cannot read converged value");
+            return false;
+        }
+        m_CameraControl->Set(CameraControl_Exposure, val, CameraControl_Flags_Manual);
+        locked_value = val;
+
+        // Pin the converged gain too.
+        if (have_gain) {
+            long g, gf;
+            if (SUCCEEDED(m_VideoProcAmp->Get(VideoProcAmp_Gain, &g, &gf))) {
+                m_VideoProcAmp->Set(VideoProcAmp_Gain, g, VideoProcAmp_Flags_Manual);
+                LOG_INFO("autotune exposure: locked gain = {} (was {})", g, gain_cur);
+            }
+        }
+
+        // Log pre-Auto vs converged: if these are identical across different lighting,
+        // the driver returns a stale value while in Auto and converge-then-lock can't
+        // work on this camera (would need a metric sweep instead).
+        LOG_INFO("autotune exposure: converged and locked at {} (was {})", val, cur);
+        return true;
+    }
+
+    bool CameraManager::autotune_white_balance(long& locked_value, int settle_max) {
+        if (!m_VideoProcAmp) {
+            LOG_WARNING("autotune white-balance: VideoProcAmp unavailable");
+            return false;
+        }
+
+        long cur, flags;
+        if (FAILED(m_VideoProcAmp->Get(VideoProcAmp_WhiteBalance, &cur, &flags))) {
+            LOG_WARNING("autotune white-balance: cannot read white-balance");
+            return false;
+        }
+
+        if (FAILED(m_VideoProcAmp->Set(VideoProcAmp_WhiteBalance, cur, VideoProcAmp_Flags_Auto))) {
+            LOG_WARNING("autotune white-balance: Auto mode unavailable; locking current value {}", cur);
+            m_VideoProcAmp->Set(VideoProcAmp_WhiteBalance, cur, VideoProcAmp_Flags_Manual);
+            locked_value = cur;
+            return true;
+        }
+
+        discard_frames(5);
+        Image tmp;
+        grab_stable_frame(tmp, 0, 0, m_Resolution.m_Width - 1, m_Resolution.m_Height - 1,
+                          settle_max, 2.5);
+
+        long val, f2;
+        if (FAILED(m_VideoProcAmp->Get(VideoProcAmp_WhiteBalance, &val, &f2))) {
+            LOG_WARNING("autotune white-balance: cannot read converged value");
+            return false;
+        }
+        m_VideoProcAmp->Set(VideoProcAmp_WhiteBalance, val, VideoProcAmp_Flags_Manual);
+        locked_value = val;
+        // pre-Auto vs converged: identical across lighting => driver returns a stale
+        // value in Auto and converge-then-lock won't work here (see autotune_exposure).
+        LOG_INFO("autotune white-balance: converged and locked at {} (was {})", val, cur);
+        return true;
+    }
+
     bool CameraManager::get_focus_range(long& min, long& max, long& step) const {
         if (!m_CameraControl) return false;
         long default_val, caps;

@@ -1,8 +1,13 @@
 #include "auto_sensitivity.h"
 
+#include "foreground.h"
+#include "boundary_trace.h"
+#include "contours.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <vector>
 
 namespace {
@@ -237,5 +242,67 @@ namespace cc::processing {
 
         int threshold = shoulder + k_SatMargin;
         return std::clamp(threshold, k_SatMin, k_SatMax);
+    }
+
+    int detect_saturation_threshold_by_teeth(const cc::Image& image) {
+        if (image.empty() || image.channels() != 3)
+            return k_SatDefault;
+
+        // Histogram-based default (cheap) is the fallback if nothing plausible is found.
+        const int fallback = detect_saturation_threshold(image);
+
+        cc::Image mask(image.rows(), image.cols(), 1);
+        cc::Image fg(image.rows(), image.cols(), 3);
+        cc::Image blur(image.rows(), image.cols(), 1);
+        cc::Image scratch(image.rows(), image.cols(), 3);
+
+        // Sweep candidate saturation thresholds; at each, segment → contour → count.
+        // The discriminator (from diagnosis): a threshold that BREAKS the rim makes
+        // the FFT latch onto a low-frequency shape artifact, so fft << direct; a good
+        // threshold gives fft >= direct. Among the non-broken candidates, take the
+        // strongest tooth count that occurs on a STABLE plateau (≥2 thresholds), and
+        // return the highest such threshold (cleanest, lowest-background mask).
+        constexpr int k_Lo = 28, k_Hi = 100, k_Step = 6;
+        std::vector<std::pair<int,int>> good;  // (threshold, fft) for non-broken candidates
+
+        for (int t = k_Lo; t <= k_Hi; t += k_Step) {
+            determine_foreground_by_saturation(t, image, mask, fg, blur);
+            auto contours = find_contours(mask);
+            if (contours.empty()) continue;
+            std::memcpy(scratch.data(), image.data(), scratch.total_bytes());
+            auto res = process_contours(contours, scratch);
+            if (!res) continue;
+
+            int fft    = res->m_SpeculativeCount;
+            int direct = static_cast<int>(res->m_Teeth.size());
+            // Plausible tooth count, and NOT the broken-rim regime (fft << direct).
+            if (fft >= 8 && fft <= 500 && fft * 10 >= direct * 7)
+                good.emplace_back(t, fft);
+        }
+
+        if (good.empty())
+            return fallback;
+
+        // Best count that appears on a plateau (≥2 candidate thresholds); else the max.
+        int best_count = 0;
+        for (const auto& [t, fft] : good) {
+            int occurrences = 0;
+            for (const auto& [t2, fft2] : good)
+                if (std::abs(fft2 - fft) <= 1) ++occurrences;     // ~equal counts
+            if (occurrences >= 2 && fft > best_count) best_count = fft;
+        }
+        if (best_count == 0)  // no plateau — fall back to the single strongest
+            for (const auto& [t, fft] : good) best_count = std::max(best_count, fft);
+
+        // Pick the MIDDLE threshold of that plateau — maximum margin from both the
+        // low edge (gear merges into the wall) and the high edge (rim breaks), which
+        // is the most robust choice for noisy live frames.
+        std::vector<int> plateau;
+        for (const auto& [t, fft] : good)
+            if (std::abs(fft - best_count) <= 1) plateau.push_back(t);
+        if (plateau.empty())
+            return fallback;
+        std::sort(plateau.begin(), plateau.end());
+        return plateau[plateau.size() / 2];
     }
 }

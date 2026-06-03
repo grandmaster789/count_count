@@ -131,35 +131,19 @@ namespace cc {
             }
         }
 
-        // build the message
-        // gap anomaly = missing tooth(s), arc anomaly = damaged tooth(s)
+        // build the message: just the tooth count and a confidence percentage,
+        // e.g. "82  52%". The headline count is the FFT pitch estimate
+        // (speculative_count) whenever it is valid — it is the reliable count for
+        // fine-toothed gears where the direct rising-edge count aliases — and falls
+        // back to the direct count otherwise. The embedded bitmap font only renders
+        // digits, '/', '(', ')', '%', '?', '!' and space, so both are bare numbers.
+        // gap anomaly = missing tooth(s), arc anomaly = damaged tooth(s) (arrows only).
         bool has_anomaly = (num_gap_anomalies > 0 || num_arc_anomalies > 0);
-        size_t expected_count = teeth.size() + num_gap_anomalies + num_arc_anomalies;
+        int  direct      = (direct_count >= 0) ? direct_count : static_cast<int>(teeth.size());
+        bool fft_valid   = speculative_count > 0;
+        int  count       = fft_valid ? speculative_count : direct;
 
-        // Headline the FFT pitch estimate (speculative_count) whenever it is valid:
-        // it is the reliable count for fine-toothed gears where the direct
-        // rising-edge count aliases (e.g., it reads 19 on an 84-tooth gear). The
-        // direct count is shown as a parenthetical when it disagrees. When the FFT
-        // is unavailable, we fall back to the direct count.
-        int  direct    = (direct_count >= 0) ? direct_count : static_cast<int>(teeth.size());
-        bool fft_valid = speculative_count > 0;
-
-        std::string message;
-        // The embedded bitmap font only renders digits, '/', '(', ')', '%', '?', '!'
-        // and space — so the direct count and fit confidence are shown as bare
-        // numbers: "27 (26) 97%" = FFT count 27, direct count 26, 97% fit.
-        if (fft_valid) {
-            message = std::format("{}", speculative_count);
-
-            if (has_anomaly)
-                message += std::format(" ({}/{})", teeth.size(), expected_count);
-            else if (speculative_count != direct)
-                message += std::format(" ({})", direct);
-        } else if (has_anomaly) {
-            message = std::format("{}/{}", teeth.size(), expected_count);
-        } else {
-            message = std::format("{}/{}", direct, direct);
-        }
+        std::string message = std::format("{}", count);
 
         // Append the analysis-by-synthesis goodness-of-fit as an integer percent and
         // flag low-confidence frames (poor template match → non-gear / bad frame).

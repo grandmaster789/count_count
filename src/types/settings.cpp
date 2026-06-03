@@ -13,7 +13,9 @@ namespace cc {
             << static_cast<int>(s.m_ForegroundColor[1]) << ' '
             << static_cast<int>(s.m_ForegroundColor[2]) << '\n'
             << s.m_ForegroundColorTolerance             << '\n'
-            << s.m_FocusValue                           << '\n';
+            << s.m_FocusValue                           << '\n'
+            << s.m_ExposureValue                        << '\n'
+            << s.m_WhiteBalanceValue                    << '\n';
 
         return os;
     }
@@ -42,6 +44,16 @@ namespace cc {
             static_cast<double>(fg1),
             static_cast<double>(fg2)
         };
+
+        // Optional trailing fields — older config files won't have them, so a read
+        // failure here is not fatal; just keep the unset-sentinel defaults.
+        is >> s.m_ExposureValue;
+        is >> s.m_WhiteBalanceValue;
+        if (is.fail()) {
+            s.m_ExposureValue     = k_CameraValueUnset;
+            s.m_WhiteBalanceValue = k_CameraValueUnset;
+            is.clear();
+        }
 
         return is;
     }

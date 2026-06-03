@@ -24,6 +24,16 @@ namespace cc::processing {
     // the object's own distribution and erodes low-saturation tooth tips. Returns
     // a value clamped to a sane range; falls back to a default if no clear peak.
     int detect_saturation_threshold(const cc::Image& source_image);
+
+    // Count-guided saturation threshold for hard captures (worn gear, or a
+    // saturated/blue-tinted wall whose saturation overlaps the gear's). Sweeps
+    // candidate thresholds, segments + counts at each, and returns the threshold
+    // whose gear contour yields the strongest STABLE tooth count — rejecting the
+    // broken-rim regime where the FFT latches onto a low-frequency artifact
+    // (fft << direct). Heavier than detect_saturation_threshold(): intended for
+    // calibration ('A' / startup), not per frame. Falls back to the histogram
+    // threshold if no plausible gear count is found.
+    int detect_saturation_threshold_by_teeth(const cc::Image& source_image);
 }
 
 #endif

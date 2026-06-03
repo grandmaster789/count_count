@@ -32,12 +32,21 @@ namespace cc::app {
         std::unique_ptr<CameraManager>        m_CameraManager;
         std::unique_ptr<MainWindowController> m_UiController;
 
-        bool m_Running       = false;
-        bool m_UseLiveVideo  = true;  // when this is false, use a reference image instead
-        bool m_AutofocusDone = false; // run the focus sweep once after camera init
+        bool m_Running         = false;
+        bool m_UseLiveVideo    = true;  // when this is false, use a reference image instead
+        bool m_StartupTuneDone = false; // auto-tune exposure/WB/focus once after camera init
 
         static constexpr size_t k_MinimumToothCount = 8;
         static constexpr size_t k_TemporalWindow    = 10;
+
+        // Self-heal: if the count looks broken (FFT latched onto a low-frequency
+        // shape artifact, i.e. fft << direct) for this many consecutive frames,
+        // auto-recalibrate the saturation threshold — throttled by a cooldown so a
+        // genuinely hard scene can't recalibrate every frame (the search is heavy).
+        static constexpr int k_BrokenStreakTrigger = 4;
+        static constexpr int k_SelfHealCooldown    = 30; // frames between recalibrations
+        int m_BrokenStreak       = 0;
+        int m_FramesSinceRecalib = k_SelfHealCooldown; // allow an immediate first heal
 
         // Trackbar/tolerance values below this are treated as "auto-calibrate the
         // saturation threshold each frame" rather than a manual S threshold. Below
@@ -63,6 +72,8 @@ namespace cc::app {
         void main_loop();
         void auto_detect_sensitivity() const;
         void autofocus() const;          // contrast-detection focus sweep on the gear
+        void auto_exposure() const;      // converge-then-lock the camera's auto-exposure
+        void auto_white_balance() const; // converge-then-lock the camera's auto white-balance
         void print_startup_info() const;
 
         static void print_keyboard_controls();
