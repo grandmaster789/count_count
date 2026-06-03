@@ -46,11 +46,16 @@ namespace cc::app {
         std::vector<uint8_t>       m_BlitBuffer; // padded buffer for DIB 4-byte row alignment
 
         // Win32 handles
+        static constexpr int k_NumButtons = 7;
         HWND   m_Hwnd      = nullptr;
         HWND   m_Trackbar  = nullptr;
+        HWND   m_Buttons[k_NumButtons] = {};
+        int    m_PendingKey = -1; // key injected by an on-screen button, returned by wait_key()
         bool   m_IsOpen    = false;
 
         void create_window();
+        void create_buttons();
+        void layout_children(int client_width, int client_height) const;
         void blit_image(const cc::Image& image, HDC hdc = nullptr);
 
         static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);

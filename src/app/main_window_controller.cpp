@@ -3,6 +3,7 @@
 
 #include "util/logger.h"
 
+#include <algorithm>
 #include <commctrl.h>
 #include <windowsx.h> // GET_X_LPARAM, GET_Y_LPARAM
 #pragma comment(lib, "comctl32.lib")
@@ -11,6 +12,27 @@ namespace cc::app {
     // Custom window class name
     static constexpr const char* k_WndClassName = "CountCountWindowClass";
     static bool s_ClassRegistered = false;
+
+    // Layout
+    static constexpr int k_TrackbarHeight = 30;
+    static constexpr int k_PanelWidth     = 150; // right-side button column
+    static constexpr int k_ButtonHeight   = 38;
+    static constexpr int k_ButtonGap      = 6;
+    static constexpr int k_PanelMargin    = 8;
+
+    // On-screen buttons. Each click injects `key` so the existing main_loop switch
+    // handles it exactly like the keyboard shortcut. ids start at 100 (trackbar is 1).
+    struct ButtonSpec { int id; int key; const char* label; };
+    static constexpr ButtonSpec k_ButtonSpecs[] = {
+        { 100, 13,  "Cycle Display" },   // ENTER
+        { 101, 'a', "Calibrate" },       // auto saturation threshold
+        { 102, 'f', "Autofocus" },
+        { 103, 'e', "Auto Exposure" },
+        { 104, 'w', "Auto WhiteBal" },
+        { 105, 'g', "Save Frame" },
+        { 106, 'd', "Toggle Debug" },
+    };
+    static_assert(sizeof(k_ButtonSpecs) / sizeof(k_ButtonSpecs[0]) == 7);
 
     MainWindowController::MainWindowController(
         SettingsManager*   settings_manager,
@@ -57,7 +79,7 @@ namespace cc::app {
             m_WindowName.c_str(),
             WS_OVERLAPPEDWINDOW | WS_VISIBLE,
             CW_USEDEFAULT, CW_USEDEFAULT,
-            800, 600 + 40, // extra height for trackbar
+            800 + k_PanelWidth, 600 + 40, // extra width for buttons, height for trackbar
             nullptr,
             nullptr,
             GetModuleHandle(nullptr),
@@ -93,10 +115,53 @@ namespace cc::app {
         SendMessageA(m_Trackbar, TBM_SETPOS, TRUE,
             m_SettingsManager->get().m_ForegroundColorTolerance);
 
+        create_buttons();
+
+        RECT rc;
+        GetClientRect(m_Hwnd, &rc);
+        layout_children(rc.right, rc.bottom);
+
         m_IsOpen = true;
 
         ShowWindow(m_Hwnd, SW_SHOW);
         UpdateWindow(m_Hwnd);
+    }
+
+    void MainWindowController::create_buttons() {
+        HFONT gui_font = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+        for (int i = 0; i < k_NumButtons; ++i) {
+            m_Buttons[i] = CreateWindowExA(
+                0,
+                "BUTTON",
+                k_ButtonSpecs[i].label,
+                WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                0, 0, 10, 10, // positioned by layout_children
+                m_Hwnd,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(k_ButtonSpecs[i].id)),
+                GetModuleHandle(nullptr),
+                nullptr
+            );
+            if (m_Buttons[i])
+                SendMessageA(m_Buttons[i], WM_SETFONT, reinterpret_cast<WPARAM>(gui_font), TRUE);
+        }
+    }
+
+    void MainWindowController::layout_children(int client_width, int client_height) const {
+        // Trackbar spans the image area (left of the button panel).
+        int image_width = std::max(0, client_width - k_PanelWidth);
+        if (m_Trackbar)
+            MoveWindow(m_Trackbar, 0, 0, image_width, k_TrackbarHeight, TRUE);
+
+        // Buttons in a vertical column down the right panel, below the trackbar.
+        int x = client_width - k_PanelWidth + k_PanelMargin;
+        int w = k_PanelWidth - 2 * k_PanelMargin;
+        int y = k_TrackbarHeight + k_PanelMargin;
+        for (int i = 0; i < k_NumButtons; ++i) {
+            if (m_Buttons[i])
+                MoveWindow(m_Buttons[i], x, y, w, k_ButtonHeight, TRUE);
+            y += k_ButtonHeight + k_ButtonGap;
+        }
+        (void)client_height;
     }
 
     void MainWindowController::show(const cc::Image& image) {
@@ -140,11 +205,11 @@ namespace cc::app {
             pixel_data = m_BlitBuffer.data();
         }
 
-        // Get client area dimensions (excluding trackbar)
+        // Get client area dimensions (excluding the top trackbar and right button panel)
         RECT client_rect;
         GetClientRect(m_Hwnd, &client_rect);
-        int trackbar_height = 30;
-        int draw_height = client_rect.bottom - trackbar_height;
+        int draw_width  = std::max(0, static_cast<int>(client_rect.right) - k_PanelWidth);
+        int draw_height = client_rect.bottom - k_TrackbarHeight;
 
         // Use HALFTONE mode for proper color averaging when scaling
         SetStretchBltMode(hdc, HALFTONE);
@@ -152,8 +217,8 @@ namespace cc::app {
 
         StretchDIBits(
             hdc,
-            0, trackbar_height,                     // dest x, y (below trackbar)
-            client_rect.right, draw_height,         // dest width, height
+            0, k_TrackbarHeight,                    // dest x, y (below trackbar)
+            draw_width, draw_height,                // dest width, height (left of panel)
             0, 0,                                   // src x, y
             image.cols(), image.rows(),             // src width, height
             pixel_data,
@@ -197,6 +262,9 @@ namespace cc::app {
         ULONGLONG start = GetTickCount64();
         int key = -1;
 
+        // An on-screen button clicked in a previous pump may have queued a key.
+        if (m_PendingKey != -1) { key = m_PendingKey; m_PendingKey = -1; return key; }
+
         while (true) {
             while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE)) {
                 if (msg.message == WM_QUIT) {
@@ -218,7 +286,9 @@ namespace cc::app {
                 }
 
                 TranslateMessage(&msg);
-                DispatchMessageA(&msg);
+                DispatchMessageA(&msg); // a button click here sets m_PendingKey via WM_COMMAND
+
+                if (m_PendingKey != -1) { key = m_PendingKey; m_PendingKey = -1; }
 
                 if (key != -1)
                     return key;
@@ -274,19 +344,20 @@ namespace cc::app {
                     break;
 
                 int click_x = GET_X_LPARAM(lParam);
-                int click_y = GET_Y_LPARAM(lParam) - 30; // subtract trackbar height
+                int click_y = GET_Y_LPARAM(lParam) - k_TrackbarHeight;
 
                 if (click_y < 0)
                     break;
 
-                // Map window coordinates to image coordinates
+                // Map window coordinates to image coordinates (image occupies the area
+                // left of the button panel, below the trackbar).
                 RECT client_rect;
                 GetClientRect(hwnd, &client_rect);
-                int draw_width  = client_rect.right;
-                int draw_height = client_rect.bottom - 30;
+                int draw_width  = client_rect.right - k_PanelWidth;
+                int draw_height = client_rect.bottom - k_TrackbarHeight;
 
-                if (draw_width <= 0 || draw_height <= 0)
-                    break;
+                if (draw_width <= 0 || draw_height <= 0 || click_x >= draw_width)
+                    break; // outside the image (e.g. the button panel)
 
                 int img_x = click_x * self->m_LastImage.cols() / draw_width;
                 int img_y = click_y * self->m_LastImage.rows() / draw_height;
@@ -305,6 +376,23 @@ namespace cc::app {
                 return 0;
             }
 
+            case WM_COMMAND: {
+                // On-screen button clicked: inject the matching key so wait_key()
+                // returns it and main_loop's switch runs the same action as the shortcut.
+                if (!self || HIWORD(wParam) != BN_CLICKED)
+                    break;
+
+                int id = LOWORD(wParam);
+                for (const auto& spec : k_ButtonSpecs) {
+                    if (spec.id == id) {
+                        self->m_PendingKey = spec.key;
+                        break;
+                    }
+                }
+                SetFocus(hwnd); // keep keyboard focus on the main window, not the button
+                return 0;
+            }
+
             case WM_PAINT: {
                 PAINTSTRUCT ps;
                 HDC hdc = BeginPaint(hwnd, &ps);
@@ -315,11 +403,10 @@ namespace cc::app {
             }
 
             case WM_SIZE: {
-                if (!self || !self->m_Trackbar)
+                if (!self)
                     break;
 
-                int width = LOWORD(lParam);
-                MoveWindow(self->m_Trackbar, 0, 0, width, 30, TRUE);
+                self->layout_children(LOWORD(lParam), HIWORD(lParam));
                 return 0;
             }
 
