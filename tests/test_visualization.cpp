@@ -150,3 +150,26 @@ TEST_CASE("display_results - anomaly arrows drawn when anomalies present", "[vis
     // Anomaly image has extra arrow pixels drawn
     REQUIRE(count_non_white(img_anom) > count_non_white(img_clean));
 }
+
+TEST_CASE("display_results - healing suppresses the count to '?'", "[visualization]") {
+    // While self-heal is recalibrating, the label is "?" regardless of the (broken)
+    // count — so two very different counts render identically when healing=true,
+    // but differently when healing=false.
+    auto teeth = uniform_teeth(8);
+    std::vector<uint8_t> anomaly_mask(teeth.size(), cc::ToothAnomaly::none);
+    cc::Point2i centroid{150, 150};
+
+    cc::Image heal_small = white_image(300, 300);
+    cc::Image heal_big   = white_image(300, 300);
+    // speculative_count, direct_count, fit_score, healing=true
+    cc::display_results(centroid, teeth, anomaly_mask, heal_small, 6,  6,  -1.0, true);
+    cc::display_results(centroid, teeth, anomaly_mask, heal_big,   72, 72, -1.0, true);
+    REQUIRE(count_non_white(heal_small) == count_non_white(heal_big)); // both render "?"
+
+    // Without healing, the same two counts differ (72 wider than 6).
+    cc::Image norm_small = white_image(300, 300);
+    cc::Image norm_big   = white_image(300, 300);
+    cc::display_results(centroid, teeth, anomaly_mask, norm_small, 6,  6,  -1.0, false);
+    cc::display_results(centroid, teeth, anomaly_mask, norm_big,   72, 72, -1.0, false);
+    REQUIRE(count_non_white(norm_big) > count_non_white(norm_small));
+}

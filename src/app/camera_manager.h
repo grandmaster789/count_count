@@ -43,13 +43,17 @@ namespace cc::app {
                                int x0, int y0, int x1, int y1,
                                int max_discard = 10, double eps = 3.0);
 
-        // Converge-then-lock: engage the camera's own auto exposure / white-balance,
-        // wait for it to settle, then read the converged value and lock it to manual
-        // (deterministic, like the custom autofocus result). Returns the locked value
-        // in `locked_value`. False if the control is unavailable. If the camera lacks
-        // an Auto mode, the current value is locked instead. settle_max bounds the wait.
+        // Converge-then-lock exposure: engage the camera's own auto-exposure, settle,
+        // read the converged value and lock it to manual (+ gain). Returns the locked
+        // value. (White balance does NOT use this: reading WhiteBalance while in Auto
+        // returns a stale value on this hardware, so WB uses a metric sweep instead —
+        // see Application::auto_white_balance + processing/white_balance.)
         bool autotune_exposure(long& locked_value, int settle_max = 40);
-        bool autotune_white_balance(long& locked_value, int settle_max = 40);
+
+        // White-balance is a scalar (Kelvin) control; these drive a metric sweep.
+        bool get_white_balance_range(long& min, long& max, long& step) const;
+        bool get_white_balance(long& value) const;
+        bool set_white_balance(long value) const;
 
     private:
         bool negotiate_media_type(const Resolution& desired);

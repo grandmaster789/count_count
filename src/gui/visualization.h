@@ -23,7 +23,8 @@ namespace cc {
         Image&                               output_image,
         int                                  speculative_count = -1,
         int                                  direct_count      = -1,
-        double                               fit_score         = -1.0
+        double                               fit_score         = -1.0,
+        bool                                 healing           = false
     );
 }
 

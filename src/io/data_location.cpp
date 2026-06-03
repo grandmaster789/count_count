@@ -11,9 +11,12 @@ namespace cc {
             if (fs::exists(current_path / "data"))
                 return current_path / "data";
 
+            std::cout << "Checking path: " << current_path << "\\data\n";
+
             auto parent = current_path.parent_path();
             if (parent == current_path)
                 break;
+
             current_path = parent;
         }
 

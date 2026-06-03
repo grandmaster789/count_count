@@ -13,6 +13,7 @@
 #include "processing/auto_sensitivity.h"
 #include "processing/gear_template.h"
 #include "processing/focus.h"
+#include "processing/white_balance.h"
 
 #include "gui/visualization.h"
 #include "gui/drawing.h"
@@ -129,14 +130,12 @@ namespace cc::app {
                     }
 
                     // Auto-tune once, after the camera is up and delivering frames.
-                    // NOTE: exposure/white-balance are deliberately NOT auto-locked at
-                    // startup — a bad converge-then-lock (e.g. a blue-tinted WB) raises
-                    // the wall's saturation until it overlaps the gear's and breaks
-                    // segmentation. The camera's native AE/AWB is left running; 'E'/'W'
-                    // remain available to lock manually. We do run autofocus (the
-                    // hardware AF won't converge) and the count-guided saturation
-                    // calibration.
+                    // Order: white balance first (a metric sweep that neutralises the
+                    // wall — keeps it low-saturation), then autofocus, then the
+                    // count-guided saturation calibration (which depends on WB).
+                    // Exposure is left on the camera's native AE ('E' locks it manually).
                     if (!m_StartupTuneDone) {
+                        auto_white_balance();
                         autofocus();
                         auto_detect_sensitivity();
                         m_StartupTuneDone = true;
@@ -259,7 +258,8 @@ namespace cc::app {
                                 m_OutputImage,
                                 smoothed_spec,
                                 smoothed_direct,
-                                fit.valid ? fit.score : -1.0
+                                fit.valid ? fit.score : -1.0,
+                                broken   // self-heal in progress → show "?"
                             );
                         }
                         else {
@@ -499,18 +499,49 @@ namespace cc::app {
             return;
         }
 
-        // Converge-then-lock the camera's own white balance: a neutral, unclipped
-        // background keeps the wall low-saturation, which is what the saturation
-        // segmentation relies on to separate the chromatic gear.
-        LOG_INFO("Auto-white-balance: letting the camera converge, then locking...");
-        long value = 0;
-        if (m_CameraManager->autotune_white_balance(value)) {
-            m_SettingsManager->get().m_WhiteBalanceValue = static_cast<int>(value);
-            m_SettingsManager->save();
-            LOG_INFO("Auto-white-balance: locked white-balance = {}", value);
-        } else {
-            LOG_WARNING("Auto-white-balance: failed (control unavailable)");
+        // Metric sweep (NOT converge-then-lock): this camera returns a stale value
+        // when WhiteBalance is read in Auto mode, so locking that gives the neutral
+        // default (~5000K) and a blue cast under warm light. Instead, sweep the Kelvin
+        // scalar, MEASURE the resulting image's colour cast (per-channel median, robust
+        // to the chromatic gear), and lock the value that neutralises the scene. A
+        // neutral, unclipped background also keeps the wall low-saturation, which the
+        // saturation segmentation relies on.
+        long wb_min, wb_max, wb_step;
+        if (!m_CameraManager->get_white_balance_range(wb_min, wb_max, wb_step)) {
+            LOG_WARNING("Auto-white-balance: cannot read white-balance range");
+            return;
         }
+        if (wb_max <= wb_min) {
+            LOG_WARNING("Auto-white-balance: white-balance is not a usable scalar (range {}..{})", wb_min, wb_max);
+            return;
+        }
+
+        const auto res = m_CameraManager->get_resolution();
+        const int W = res.m_Width, H = res.m_Height;
+        LOG_INFO("Auto-white-balance: sweeping {}..{} to neutralise the scene "
+                 "(window may be unresponsive for a few seconds)...", wb_min, wb_max);
+
+        // Lock exposure/gain (and WB) so only the swept WB varies during the metric.
+        m_CameraManager->begin_focus_sweep();
+
+        Image probe;
+        auto evaluate = [&](long wb) -> double {
+            m_CameraManager->set_white_balance(wb);
+            m_CameraManager->grab_stable_frame(probe, 0, 0, W - 1, H - 1, /*max_discard=*/4, /*eps=*/3.0);
+            double imbalance = processing::color_imbalance(probe);
+            LOG_DEBUG("auto-wb: kelvin={} imbalance={:.1f}", wb, imbalance);
+            return -imbalance;  // maximise neutrality
+        };
+
+        // WB needs ~50K resolution, not the native 10K step; coarse-then-fine.
+        long best = processing::find_best_focus(wb_min, wb_max, /*step=*/50, evaluate, /*coarse=*/16);
+
+        m_CameraManager->end_focus_sweep();        // restore exposure/gain to native
+        m_CameraManager->set_white_balance(best);  // lock the neutralising value (manual)
+
+        m_SettingsManager->get().m_WhiteBalanceValue = static_cast<int>(best);
+        m_SettingsManager->save();
+        LOG_INFO("Auto-white-balance: locked white-balance = {} Kelvin", best);
     }
 
     void Application::print_startup_info() const {

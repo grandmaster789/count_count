@@ -53,7 +53,8 @@ namespace cc {
         Image&                               output_image,
         int                                  speculative_count,
         int                                  direct_count,
-        double                               fit_score
+        double                               fit_score,
+        bool                                 healing
     ) {
         // Scale font relative to image height so text is readable at any resolution
         double k_FontScale = std::max(1.1, output_image.rows() / 100.0);
@@ -143,17 +144,23 @@ namespace cc {
         bool fft_valid   = speculative_count > 0;
         int  count       = fft_valid ? speculative_count : direct;
 
-        std::string message = std::format("{}", count);
-
-        // Append the analysis-by-synthesis goodness-of-fit as an integer percent and
-        // flag low-confidence frames (poor template match → non-gear / bad frame).
-        // Thin-ring gears fit lower than solid discs (less body to match), so the
-        // flag sits below the lowest clean real gear (~0.52) while still catching
-        // genuinely poor matches.
+        // While self-heal is recalibrating, the count is a broken-rim artifact —
+        // show "?" instead of a confident wrong number.
         constexpr double k_LowConfidenceFit = 0.40;
-        bool low_confidence = (fit_score >= 0.0 && fit_score < k_LowConfidenceFit);
-        if (fit_score >= 0.0)
-            message += std::format("  {}%", static_cast<int>(std::lround(fit_score * 100.0)));
+        bool low_confidence = healing || (fit_score >= 0.0 && fit_score < k_LowConfidenceFit);
+
+        std::string message;
+        if (healing) {
+            message = "?";
+        } else {
+            message = std::format("{}", count);
+            // Append the analysis-by-synthesis goodness-of-fit as an integer percent.
+            // Thin-ring gears fit lower than solid discs (less body to match), so the
+            // flag sits below the lowest clean real gear (~0.52) while still catching
+            // genuinely poor matches.
+            if (fit_score >= 0.0)
+                message += std::format("  {}%", static_cast<int>(std::lround(fit_score * 100.0)));
+        }
 
         auto [width, height] = drawing::measure_text(message, k_FontScale);
         int shadow_offset = std::max(2, static_cast<int>(k_FontScale / 2));

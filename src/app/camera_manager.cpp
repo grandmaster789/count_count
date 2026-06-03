@@ -498,41 +498,22 @@ namespace cc::app {
         return true;
     }
 
-    bool CameraManager::autotune_white_balance(long& locked_value, int settle_max) {
-        if (!m_VideoProcAmp) {
-            LOG_WARNING("autotune white-balance: VideoProcAmp unavailable");
-            return false;
-        }
+    bool CameraManager::get_white_balance_range(long& min, long& max, long& step) const {
+        if (!m_VideoProcAmp) return false;
+        long def, caps;
+        return SUCCEEDED(m_VideoProcAmp->GetRange(VideoProcAmp_WhiteBalance,
+                         &min, &max, &step, &def, &caps));
+    }
 
-        long cur, flags;
-        if (FAILED(m_VideoProcAmp->Get(VideoProcAmp_WhiteBalance, &cur, &flags))) {
-            LOG_WARNING("autotune white-balance: cannot read white-balance");
-            return false;
-        }
+    bool CameraManager::get_white_balance(long& value) const {
+        if (!m_VideoProcAmp) return false;
+        long flags;
+        return SUCCEEDED(m_VideoProcAmp->Get(VideoProcAmp_WhiteBalance, &value, &flags));
+    }
 
-        if (FAILED(m_VideoProcAmp->Set(VideoProcAmp_WhiteBalance, cur, VideoProcAmp_Flags_Auto))) {
-            LOG_WARNING("autotune white-balance: Auto mode unavailable; locking current value {}", cur);
-            m_VideoProcAmp->Set(VideoProcAmp_WhiteBalance, cur, VideoProcAmp_Flags_Manual);
-            locked_value = cur;
-            return true;
-        }
-
-        discard_frames(5);
-        Image tmp;
-        grab_stable_frame(tmp, 0, 0, m_Resolution.m_Width - 1, m_Resolution.m_Height - 1,
-                          settle_max, 2.5);
-
-        long val, f2;
-        if (FAILED(m_VideoProcAmp->Get(VideoProcAmp_WhiteBalance, &val, &f2))) {
-            LOG_WARNING("autotune white-balance: cannot read converged value");
-            return false;
-        }
-        m_VideoProcAmp->Set(VideoProcAmp_WhiteBalance, val, VideoProcAmp_Flags_Manual);
-        locked_value = val;
-        // pre-Auto vs converged: identical across lighting => driver returns a stale
-        // value in Auto and converge-then-lock won't work here (see autotune_exposure).
-        LOG_INFO("autotune white-balance: converged and locked at {} (was {})", val, cur);
-        return true;
+    bool CameraManager::set_white_balance(long value) const {
+        if (!m_VideoProcAmp) return false;
+        return SUCCEEDED(m_VideoProcAmp->Set(VideoProcAmp_WhiteBalance, value, VideoProcAmp_Flags_Manual));
     }
 
     bool CameraManager::get_focus_range(long& min, long& max, long& step) const {
