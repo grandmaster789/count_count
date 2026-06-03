@@ -498,48 +498,72 @@ namespace cc::app {
         return true;
     }
 
-    bool CameraManager::get_white_balance_range(long& min, long& max, long& step) const {
-        if (!m_VideoProcAmp) return false;
+    void CameraManager::get_white_balance_range(long& min, long& max, long& step) const {
+        if (!m_VideoProcAmp) {
+            LOG_WARNING("get_white_balance_range: video proc amp unavailable");
+            return;
+        }
+
         long def, caps;
-        return SUCCEEDED(m_VideoProcAmp->GetRange(VideoProcAmp_WhiteBalance,
-                         &min, &max, &step, &def, &caps));
+
+        if (FAILED(m_VideoProcAmp->GetRange(VideoProcAmp_WhiteBalance, &min, &max, &step, &def, &caps)))
+            LOG_WARNING("get_white_balance_range: failed to read white balance range");
     }
 
-    bool CameraManager::get_white_balance(long& value) const {
-        if (!m_VideoProcAmp) return false;
+    void CameraManager::get_white_balance(long& value) const {
+        if (!m_VideoProcAmp) {
+            LOG_WARNING("get_white_balance: video proc amp unavailable");
+            return;
+        }
+
         long flags;
-        return SUCCEEDED(m_VideoProcAmp->Get(VideoProcAmp_WhiteBalance, &value, &flags));
+
+        if (FAILED(m_VideoProcAmp->Get(VideoProcAmp_WhiteBalance, &value, &flags)))
+            LOG_WARNING("get_white_balance: failed to read white balance value");
     }
 
-    bool CameraManager::set_white_balance(long value) const {
-        if (!m_VideoProcAmp) return false;
-        return SUCCEEDED(m_VideoProcAmp->Set(VideoProcAmp_WhiteBalance, value, VideoProcAmp_Flags_Manual));
+    void CameraManager::set_white_balance(long value) const {
+        if (!m_VideoProcAmp) {
+            LOG_WARNING("set_white_balance: video proc amp unavailable");
+            return;
+        }
+
+        if (FAILED(m_VideoProcAmp->Set(VideoProcAmp_WhiteBalance, value, VideoProcAmp_Flags_Manual)))
+            LOG_WARNING("set_white_balance: failed to set white balance value");
     }
 
-    bool CameraManager::get_focus_range(long& min, long& max, long& step) const {
-        if (!m_CameraControl) return false;
+    void CameraManager::get_focus_range(long& min, long& max, long& step) const {
+        if (!m_CameraControl) {
+            LOG_WARNING("get_focus_range: camera control unavailable");
+            return;
+        }
+
         long default_val, caps;
-        HRESULT hr = m_CameraControl->GetRange(CameraControl_Focus, &min, &max, &step, &default_val, &caps);
-        return SUCCEEDED(hr);
+
+        if (FAILED(m_CameraControl->GetRange(CameraControl_Focus, &min, &max, &step, &default_val, &caps)))
+            LOG_WARNING("get_focus_range: failed to read focus range");
     }
 
-    bool CameraManager::get_focus(long& value) const {
-        if (!m_CameraControl)
-            return false;
+    void CameraManager::get_focus(long& value) const {
+        if (!m_CameraControl) {
+            LOG_WARNING("get_focus: camera control unavailable");
+            return;
+        }
 
         long flags = 0;
-        const HRESULT hr = m_CameraControl->Get(CameraControl_Focus, &value, &flags);
 
-        return SUCCEEDED(hr);
+        if (FAILED(m_CameraControl->Get(CameraControl_Focus, &value, &flags)))
+            LOG_WARNING("get_focus: failed to read focus value");
     }
 
-    bool CameraManager::set_focus(long value) const {
-        if (!m_CameraControl)
-            return false;
+    void CameraManager::set_focus(long value) const {
+        if (!m_CameraControl) {
+            LOG_WARNING("set_focus: camera control unavailable");
+            return;
+        }
 
-        const HRESULT hr = m_CameraControl->Set(CameraControl_Focus, value, CameraControl_Flags_Manual);
-
-        return SUCCEEDED(hr);
+        if (FAILED(m_CameraControl->Set(CameraControl_Focus, value, CameraControl_Flags_Manual)))
+            LOG_WARNING("set_focus: failed to set focus value");
     }
 
     bool CameraManager::negotiate_media_type(const Resolution& desired) {
@@ -570,8 +594,7 @@ namespace cc::app {
                 );
 
                 if (SUCCEEDED(hr)) {
-                    media_type->GetGUID(MF_MT_SUBTYPE, &m_SubType);
-                    return true;
+                    return SUCCEEDED(media_type->GetGUID(MF_MT_SUBTYPE, &m_SubType));
                 }
             }
         }
@@ -583,7 +606,7 @@ namespace cc::app {
         return m_Initialized;
     }
 
-    bool CameraManager::grab_frame(cc::Image& output) {
+    bool CameraManager::grab_frame(Image& output) {
         if (!m_Initialized || !m_SourceReader) {
             LOG_WARNING("grab_frame: camera not initialized (initialized={}, reader={})",
                         m_Initialized, m_SourceReader ? "valid" : "null");
@@ -691,37 +714,45 @@ namespace cc::app {
 
         if (m_SubType == MFVideoFormat_NV12) {
             auto expected = static_cast<DWORD>(static_cast<size_t>(abs_stride) * h * 3 / 2);
+
             if (cur_len < expected) {
                 LOG_WARNING("grab_frame: NV12 buffer too small: cur_len={}, expected={}, stride={}, {}x{}",
                             static_cast<unsigned>(cur_len), static_cast<unsigned>(expected),
                             abs_stride, w, h);
                 return false;
             }
+
             nv12_to_bgr(raw_data, w, h, abs_stride, output);
             return true;
         }
 
         if (m_SubType == MFVideoFormat_YUY2) {
             auto expected = static_cast<DWORD>(static_cast<size_t>(abs_stride) * h);
+
             if (cur_len < expected) {
                 LOG_WARNING("grab_frame: YUY2 buffer too small: cur_len={}, expected={}, stride={}, {}x{}",
                             static_cast<unsigned>(cur_len), static_cast<unsigned>(expected),
                             abs_stride, w, h);
                 return false;
             }
+
             yuy2_to_bgr(raw_data, w, h, abs_stride, output);
+
             return true;
         }
 
         if (m_SubType == MFVideoFormat_RGB24) {
             auto expected = static_cast<DWORD>(static_cast<size_t>(abs_stride) * h);
+
             if (cur_len < expected) {
                 LOG_WARNING("grab_frame: RGB24 buffer too small: cur_len={}, expected={}, stride={}, {}x{}",
                             static_cast<unsigned>(cur_len), static_cast<unsigned>(expected),
                             abs_stride, w, h);
                 return false;
             }
+
             rgb24_to_bgr(raw_data, w, h, m_Stride, output);
+
             return true;
         }
 

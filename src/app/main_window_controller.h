@@ -19,7 +19,7 @@ namespace cc::app {
 
         MainWindowController(
             SettingsManager*   settings_manager,
-            const std::string& window_name = "CountCount"
+            std::string  window_name = "CountCount"
         );
 
         ~MainWindowController();
@@ -35,28 +35,29 @@ namespace cc::app {
         void select_color(int x, int y) const;
 
         int  wait_key(int delay_ms = 30);
-        bool is_open() const;
+        [[nodiscard]] bool is_open() const;
 
-        cc::Color3 get_color_at(int x, int y) const;
+        [[nodiscard]] Color3 get_color_at(int x, int y) const;
 
     private:
-        std::string                m_WindowName;
-        SettingsManager*           m_SettingsManager;
-        cc::Image                  m_LastImage;
-        std::vector<uint8_t>       m_BlitBuffer; // padded buffer for DIB 4-byte row alignment
+        std::string          m_WindowName;
+        SettingsManager*     m_SettingsManager;
+        Image                m_LastImage;
+        std::vector<uint8_t> m_BlitBuffer; // padded buffer for DIB 4-byte row alignment
 
         // Win32 handles
         static constexpr int k_NumButtons = 7;
-        HWND   m_Hwnd      = nullptr;
-        HWND   m_Trackbar  = nullptr;
-        HWND   m_Buttons[k_NumButtons] = {};
-        int    m_PendingKey = -1; // key injected by an on-screen button, returned by wait_key()
-        bool   m_IsOpen    = false;
+
+        HWND m_Hwnd                  = nullptr;
+        HWND m_Trackbar              = nullptr;
+        HWND m_Buttons[k_NumButtons] = {};
+        int  m_PendingKey            = -1; // key injected by an on-screen button, returned by wait_key()
+        bool m_IsOpen                = false;
 
         void create_window();
         void create_buttons();
         void layout_children(int client_width, int client_height) const;
-        void blit_image(const cc::Image& image, HDC hdc = nullptr);
+        void blit_image(const Image& image, HDC hdc = nullptr);
 
         static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
     };

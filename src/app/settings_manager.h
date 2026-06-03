@@ -19,13 +19,13 @@ namespace cc::app {
         bool load();
         void save() const;
 
-              Settings& get();
-        const Settings& get() const;
+        [[nodiscard]]       Settings& get();
+        [[nodiscard]] const Settings& get() const;
 
         void reset_to_default();
 
-        void   set_selected_color(const Color3& color);
-        Color3 get_selected_color() const;
+        void                 set_selected_color(const Color3& color);
+        [[nodiscard]] Color3 get_selected_color() const;
 
     private:
         Settings              m_Settings;

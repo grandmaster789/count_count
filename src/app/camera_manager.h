@@ -20,23 +20,23 @@ namespace cc::app {
 
         [[nodiscard]] bool is_initialized() const;
 
-        bool grab_frame(cc::Image& output);
+        bool grab_frame(Image& output);
 
         [[nodiscard]] Resolution get_resolution() const;
         [[nodiscard]] bool       set_resolution(const Resolution& res);
 
-        bool get_focus_range(long& min, long& max, long& step) const;
-        bool get_focus(long& value) const;
-        bool set_focus(long value) const;
+        void get_focus_range(long& min, long& max, long& step) const;
+        void get_focus(long& value) const;
+        void set_focus(long value) const;
 
         // Lock exposure / white-balance / gain to manual for the duration of a focus
-        // sweep so the sharpness metric isn't confounded by auto-exposure drift, then
+        // sweep so auto-exposure drift doesn't confound the sharpness metric, then
         // restore the prior settings. No-op for controls the camera doesn't expose.
         void begin_focus_sweep();
         void end_focus_sweep();
 
         // Grab frames, discarding until two consecutive frames are near-identical over
-        // the (clamped) ROI bbox — i.e. the lens has settled and the buffered/stale
+        // the (clamped) ROI bbox — i.e., the lens has settled and the buffered/stale
         // MediaFoundation frames have drained — or max_discard is reached. The latest
         // frame is returned in `output`. Returns false only if a grab fails.
         bool grab_stable_frame(cc::Image& output,
@@ -51,9 +51,9 @@ namespace cc::app {
         bool autotune_exposure(long& locked_value, int settle_max = 40);
 
         // White-balance is a scalar (Kelvin) control; these drive a metric sweep.
-        bool get_white_balance_range(long& min, long& max, long& step) const;
-        bool get_white_balance(long& value) const;
-        bool set_white_balance(long value) const;
+        void get_white_balance_range(long& min, long& max, long& step) const;
+        void get_white_balance(long& value) const;
+        void set_white_balance(long value) const;
 
     private:
         bool negotiate_media_type(const Resolution& desired);

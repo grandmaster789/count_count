@@ -90,6 +90,7 @@ namespace cc::app {
 
         if (!m_UseLiveVideo) {
             auto path = m_DataPath / "test_real_gear_004.jpg";
+
             try {
                 static_image = io::load_jpg(path);
             } catch (const std::exception& e) {
@@ -180,11 +181,14 @@ namespace cc::app {
                 {
                     int filled = 0;
                     int total  = m_ForegroundMask.rows() * m_ForegroundMask.cols();
+
                     for (int y = 0; y < m_ForegroundMask.rows(); ++y) {
                         const uint8_t* row = m_ForegroundMask.ptr(y);
+
                         for (int x = 0; x < m_ForegroundMask.cols(); ++x)
                             if (row[x]) ++filled;
                     }
+
                     LOG_DEBUG("foreground mask: {}/{} pixels filled ({:.1f}%)",
                               filled, total, 100.0 * filled / total);
                 }
@@ -353,22 +357,19 @@ namespace cc::app {
                 // VK_OEM_6 ']}' for US
                 case VK_OEM_4:
                 case VK_OEM_6: {
-                    long min_f, max_f, step_f;
+                    long min_f, max_f, step_f, current_f;
 
-                    if (m_CameraManager->get_focus_range(min_f, max_f, step_f)) {
-                        long current_f;
+                    m_CameraManager->get_focus_range(min_f, max_f, step_f);
+                    m_CameraManager->get_focus(current_f);
 
-                        if (m_CameraManager->get_focus(current_f)) {
-                            long next_f = current_f + (key == VK_OEM_4 ? step_f : -step_f);
-                            next_f = std::clamp(next_f, min_f, max_f);
+                    long next_f = current_f + (key == VK_OEM_4 ? step_f : -step_f);
+                    next_f = std::clamp(next_f, min_f, max_f);
 
-                            if (m_CameraManager->set_focus(next_f)) {
-                                LOG_INFO("Focus adjusted to {}", next_f);
-                                m_SettingsManager->get().m_FocusValue = static_cast<int>(next_f);
-                                m_SettingsManager->save();
-                            }
-                        }
-                    }
+                    m_CameraManager->set_focus(next_f);
+
+                    LOG_INFO("Focus adjusted to {}", next_f);
+                    m_SettingsManager->get().m_FocusValue = static_cast<int>(next_f);
+                    m_SettingsManager->save();
                     break;
                 }
 
@@ -410,11 +411,10 @@ namespace cc::app {
         }
 
         long min_f, max_f, step_f;
-        if (!m_CameraManager->get_focus_range(min_f, max_f, step_f)) {
-            LOG_WARNING("Autofocus: cannot read focus range");
-            return;
-        }
-        if (step_f <= 0) step_f = 1;
+        m_CameraManager->get_focus_range(min_f, max_f, step_f);
+
+        if (step_f <= 0)
+            step_f = 1;
 
         // Let auto-exposure/white-balance settle before locking them: right after the
         // camera opens, exposure is usually still ramping for the first ~dozen frames,
@@ -507,10 +507,9 @@ namespace cc::app {
         // neutral, unclipped background also keeps the wall low-saturation, which the
         // saturation segmentation relies on.
         long wb_min, wb_max, wb_step;
-        if (!m_CameraManager->get_white_balance_range(wb_min, wb_max, wb_step)) {
-            LOG_WARNING("Auto-white-balance: cannot read white-balance range");
-            return;
-        }
+
+        m_CameraManager->get_white_balance_range(wb_min, wb_max, wb_step);
+
         if (wb_max <= wb_min) {
             LOG_WARNING("Auto-white-balance: white-balance is not a usable scalar (range {}..{})", wb_min, wb_max);
             return;
@@ -537,7 +536,7 @@ namespace cc::app {
         long best = processing::find_best_focus(wb_min, wb_max, /*step=*/50, evaluate, /*coarse=*/16);
 
         m_CameraManager->end_focus_sweep();        // restore exposure/gain to native
-        m_CameraManager->set_white_balance(best);  // lock the neutralising value (manual)
+        m_CameraManager->set_white_balance(best);  // lock the neutralizing value (manual)
 
         m_SettingsManager->get().m_WhiteBalanceValue = static_cast<int>(best);
         m_SettingsManager->save();

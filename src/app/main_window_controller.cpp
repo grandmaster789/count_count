@@ -4,6 +4,7 @@
 #include "util/logger.h"
 
 #include <algorithm>
+#include <utility>
 #include <commctrl.h>
 #include <windowsx.h> // GET_X_LPARAM, GET_Y_LPARAM
 #pragma comment(lib, "comctl32.lib")
@@ -35,10 +36,10 @@ namespace cc::app {
     static_assert(sizeof(k_ButtonSpecs) / sizeof(k_ButtonSpecs[0]) == 7);
 
     MainWindowController::MainWindowController(
-        SettingsManager*   settings_manager,
-        const std::string& window_name
+        SettingsManager* settings_manager,
+        std::string      window_name
     ):
-        m_WindowName(window_name),
+        m_WindowName(std::move(window_name)),
         m_SettingsManager(settings_manager)
     {
         create_window();
@@ -128,7 +129,8 @@ namespace cc::app {
     }
 
     void MainWindowController::create_buttons() {
-        HFONT gui_font = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+        auto gui_font = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+
         for (int i = 0; i < k_NumButtons; ++i) {
             m_Buttons[i] = CreateWindowExA(
                 0,
@@ -141,6 +143,7 @@ namespace cc::app {
                 GetModuleHandle(nullptr),
                 nullptr
             );
+
             if (m_Buttons[i])
                 SendMessageA(m_Buttons[i], WM_SETFONT, reinterpret_cast<WPARAM>(gui_font), TRUE);
         }
@@ -156,11 +159,13 @@ namespace cc::app {
         int x = client_width - k_PanelWidth + k_PanelMargin;
         int w = k_PanelWidth - 2 * k_PanelMargin;
         int y = k_TrackbarHeight + k_PanelMargin;
-        for (int i = 0; i < k_NumButtons; ++i) {
-            if (m_Buttons[i])
-                MoveWindow(m_Buttons[i], x, y, w, k_ButtonHeight, TRUE);
+
+        for (auto m_Button : m_Buttons) {
+            if (m_Button)
+                MoveWindow(m_Button, x, y, w, k_ButtonHeight, TRUE);
             y += k_ButtonHeight + k_ButtonGap;
         }
+
         (void)client_height;
     }
 
@@ -288,7 +293,9 @@ namespace cc::app {
                 TranslateMessage(&msg);
                 DispatchMessageA(&msg); // a button click here sets m_PendingKey via WM_COMMAND
 
-                if (m_PendingKey != -1) { key = m_PendingKey; m_PendingKey = -1; }
+                if (m_PendingKey != -1) {
+                    key = m_PendingKey; m_PendingKey = -1;
+                }
 
                 if (key != -1)
                     return key;
