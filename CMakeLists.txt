@@ -126,3 +126,35 @@ add_test(NAME CountVonCountUnitTests COMMAND CountVonCountTests)
 
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT CountVonCount) # for when using visual studio
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+
+# ----------- Install / package -------------
+# Portable layout: the executable sits at the root of the install prefix with
+# data/ beside it, so find_data_folder() resolves by walking up from the exe.
+# Settings and saved frames are written into that data/ folder, which means the
+# prefix must be user-writable -- install somewhere other than Program Files.
+install(TARGETS CountVonCount RUNTIME DESTINATION .)
+
+# The application throws at startup if no data/ folder is found, so these are
+# required, not optional extras. They double as sample images for static mode.
+install(FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/test_real_gear_001.jpg"
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/test_real_gear_002.jpg"
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/test_real_gear_003.jpg"
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/test_real_gear_004.jpg"
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/test_real_gear_005.jpg"
+        DESTINATION data
+)
+# count_count.cfg is deliberately not installed -- a fresh install should start
+# from defaults rather than inherit the developer's camera id and focus values.
+
+# Ship the MSVC runtime next to the executable so the tree runs without the
+# redistributable installed (defaults to bin/, hence the destination override).
+set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION .)
+include(InstallRequiredSystemLibraries)
+
+set(CPACK_PACKAGE_NAME               "CountVonCount")
+set(CPACK_PACKAGE_VENDOR             "grandmaster")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Real-time gear tooth counting")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY  "CountVonCount")
+set(CPACK_GENERATOR                  "ZIP") # no external tooling required
+include(CPack)

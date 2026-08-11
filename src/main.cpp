@@ -12,7 +12,9 @@ int main(int, char* argv[]) {
     namespace fs = std::filesystem;
 
     try {
-        fs::path exe_path(argv[0]);
+        // absolute(): argv[0] is a bare filename when launched from the exe's own
+        // directory, which leaves find_data_folder with no parent path to walk up
+        fs::path exe_path = fs::absolute(argv[0]);
         cc::app::Application le_application(exe_path);
 
         le_application.run();
