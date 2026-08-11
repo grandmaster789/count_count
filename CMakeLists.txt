@@ -130,8 +130,8 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 # ----------- Install / package -------------
 # Portable layout: the executable sits at the root of the install prefix with
 # data/ beside it, so find_data_folder() resolves by walking up from the exe.
-# Settings and saved frames are written into that data/ folder, which means the
-# prefix must be user-writable -- install somewhere other than Program Files.
+# Nothing is written back into the install tree -- settings and saved frames go
+# to %LOCALAPPDATA%\CountVonCount -- so the prefix may be read-only for the user.
 install(TARGETS CountVonCount RUNTIME DESTINATION .)
 
 # The application throws at startup if no data/ folder is found, so these are
@@ -156,5 +156,20 @@ set(CPACK_PACKAGE_NAME               "CountVonCount")
 set(CPACK_PACKAGE_VENDOR             "grandmaster")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Real-time gear tooth counting")
 set(CPACK_PACKAGE_INSTALL_DIRECTORY  "CountVonCount")
-set(CPACK_GENERATOR                  "ZIP") # no external tooling required
+
+# ZIP needs no external tooling; NSIS builds the installer executable and needs
+# makensis (https://nsis.sourceforge.io) -- cpack skips the generator if absent.
+set(CPACK_GENERATOR                  "ZIP;NSIS")
+
+# Start menu / desktop shortcut. EXECUTABLES_DIRECTORY must match the RUNTIME
+# destination above: CPack otherwise assumes bin/ and writes a dead shortcut.
+set(CPACK_PACKAGE_EXECUTABLES        "CountVonCount;CountVonCount")
+set(CPACK_NSIS_EXECUTABLES_DIRECTORY ".")
+set(CPACK_CREATE_DESKTOP_LINKS       "CountVonCount")
+
+set(CPACK_NSIS_PACKAGE_NAME          "CountVonCount")
+set(CPACK_NSIS_DISPLAY_NAME          "CountVonCount")
+set(CPACK_NSIS_INSTALL_ROOT          "$PROGRAMFILES64") # 64-bit build, not the (x86) tree
+set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+
 include(CPack)

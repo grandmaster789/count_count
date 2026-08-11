@@ -306,7 +306,7 @@ namespace cc::app {
 
                 case 'g':
                 case 'G':
-                    save_image(m_SourceImage, m_DataPath);
+                    save_image(m_SourceImage, m_UserDataPath);
                     break;
 
                 case 'f':
