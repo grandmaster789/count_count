@@ -57,7 +57,14 @@ namespace cc::app {
     {
         m_DataPath = find_data_folder(exe_path);
 
-        m_SettingsManager = std::make_unique<SettingsManager>(m_DataPath / "count_count.cfg");
+        // Keep writable state out of the install tree -- when installed system-wide
+        // the data folder is read-only for a standard user. Fall back to it only if
+        // there is no user folder to be had.
+        m_UserDataPath = find_user_data_folder();
+        if (m_UserDataPath.empty())
+            m_UserDataPath = m_DataPath;
+
+        m_SettingsManager = std::make_unique<SettingsManager>(m_UserDataPath / "count_count.cfg");
         m_CameraManager   = std::make_unique<CameraManager>();
         m_UiController    = std::make_unique<MainWindowController>(m_SettingsManager.get());
     }

@@ -26,7 +26,8 @@ namespace cc::app {
 
     private:
         std::filesystem::path m_ExePath;
-        std::filesystem::path m_DataPath;
+        std::filesystem::path m_DataPath;     // read-only assets, ships with the app
+        std::filesystem::path m_UserDataPath; // writable state (settings, saved frames)
 
         std::unique_ptr<SettingsManager>      m_SettingsManager;
         std::unique_ptr<CameraManager>        m_CameraManager;
